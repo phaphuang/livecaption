@@ -309,8 +309,7 @@
         let audioChunks = [];
         let isRecording = false;
         let recordInterval = null;
-        let captionBuffer = [];  // Accumulate recent transcriptions
-        let lastCaptionTime = 0;
+        let isProcessing = false;  // Prevent overlapping API calls
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -397,7 +396,7 @@
                 
                 updateStatus('live');
                 
-                // Start continuous recording in 3-second chunks
+                // Start continuous recording in 5-second chunks
                 startRecordingCycle();
                 
             } catch (error) {
@@ -417,7 +416,7 @@
                     // Restart immediately for next chunk
                     setTimeout(() => startRecordingCycle(), 100);
                 }
-            }, 3000);
+            }, 5000);  // 5 seconds for better context
         }
         
         function stopRecording() {
@@ -436,9 +435,6 @@
                 mediaRecorder.stream.getTracks().forEach(track => track.stop());
             }
             
-            // Reset caption buffer
-            captionBuffer = [];
-            lastCaptionTime = 0;
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
@@ -448,7 +444,8 @@
         }
         
         async function processAudio(audioBlob) {
-            if (!sessionId) return;
+            if (!sessionId || isProcessing) return;
+            isProcessing = true;
             
             try {
                 // 1. Transcribe audio
@@ -473,38 +470,28 @@
                     return; // No speech detected
                 }
                 
-                // Add to buffer (keep last 3 segments for context)
-                captionBuffer.push(englishText.trim());
-                if (captionBuffer.length > 3) {
-                    captionBuffer.shift();  // Remove oldest
-                }
-                lastCaptionTime = Date.now();
-                
-                // Combine buffer into longer caption
-                const combinedText = captionBuffer.join(' ');
-                
-                // Update preview
+                // Update preview immediately
                 document.getElementById('spinner').classList.remove('active');
-                document.getElementById('preview-content').textContent = combinedText;
+                document.getElementById('preview-content').textContent = englishText;
                 
-                // 2. Translate and save to Supabase
-                const translateResponse = await fetch('/api/translate', {
+                // 2. Translate and save to Supabase (don't wait)
+                fetch('/api/translate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        text: combinedText,
+                        text: englishText,
                         session_id: sessionId
                     })
-                });
-                
-                const translateData = await translateResponse.json();
-                
-                if (translateData.error) {
-                    console.error('Translation error:', translateData.error);
-                }
+                }).then(res => res.json()).then(data => {
+                    if (data.error) {
+                        console.error('Translation error:', data.error);
+                    }
+                }).catch(err => console.error('Translation failed:', err));
                 
             } catch (error) {
                 console.error('Error processing audio:', error);
+            } finally {
+                isProcessing = false;
             }
         }
         

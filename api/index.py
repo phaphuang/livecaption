@@ -88,7 +88,7 @@ async def create_session():
         )
 
 
-# Transcription helper using OpenAI GPT Realtime Whisper
+# Transcription helper using OpenAI Whisper
 async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}"
@@ -97,7 +97,9 @@ async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     # OpenAI expects multipart/form-data
     files = {
         "file": ("audio.webm", audio_bytes, "audio/webm"),
-        "model": (None, "gpt-4o-transcribe")
+        "model": (None, "whisper-1"),
+        "language": (None, "en"),  # Force English to avoid wrong language detection
+        "response_format": (None, "json")
     }
     
     async with httpx.AsyncClient() as client:
@@ -105,7 +107,7 @@ async def transcribe_with_openai(audio_bytes: bytes) -> dict:
             OPENAI_API_URL,
             headers=headers,
             files=files,
-            timeout=30.0
+            timeout=15.0
         )
         
         response.raise_for_status()
@@ -164,14 +166,15 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": f"You are a translator. Translate the following English text to {lang_name}. Return only the translation, nothing else."
+                "content": f"Translate to {lang_name}. Output only the translation."
             },
             {
                 "role": "user",
                 "content": text
             }
         ],
-        "temperature": 0.3
+        "temperature": 0.1,
+        "max_tokens": 200
     }
     
     async with httpx.AsyncClient() as client:
@@ -179,7 +182,7 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
             OPENAI_CHAT_URL,
             headers=headers,
             json=payload,
-            timeout=30.0
+            timeout=10.0
         )
         
         response.raise_for_status()
