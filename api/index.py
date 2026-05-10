@@ -29,7 +29,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # API URLs
-WHISPER_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
+WHISPER_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
 THAI_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-th"
 CHINESE_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-zh"
 
