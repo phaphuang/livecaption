@@ -29,7 +29,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # API URLs
-WHISPER_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
+OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
 THAI_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-th"
 CHINESE_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-zh"
 
@@ -79,28 +79,25 @@ async def create_session():
         )
 
 
-# Transcription helper
-async def transcribe_with_hf(audio_bytes: bytes, retry_count: int = 0) -> dict:
+# Transcription helper using OpenAI Whisper
+async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "audio/webm"
+        "Authorization": f"Bearer {HF_TOKEN}"  # Use OpenAI API key here
     }
     
-    # Add wait_for_model parameter to handle cold starts
-    url = f"{WHISPER_API_URL}?wait_for_model=true"
+    # OpenAI expects multipart/form-data
+    files = {
+        "file": ("audio.webm", audio_bytes, "audio/webm"),
+        "model": (None, "whisper-1")
+    }
     
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            url,
+            OPENAI_API_URL,
             headers=headers,
-            content=audio_bytes,
-            timeout=60.0  # Longer timeout for model loading
+            files=files,
+            timeout=30.0
         )
-        
-        # Handle model loading (503) or not found (404)
-        if response.status_code in [503, 404] and retry_count < 2:
-            await asyncio.sleep(10)  # Wait longer for cold start
-            return await transcribe_with_hf(audio_bytes, retry_count + 1)
         
         response.raise_for_status()
         return response.json()
@@ -118,11 +115,10 @@ async def transcribe(audio: UploadFile = File(...)):
     
     try:
         audio_bytes = await audio.read()
-        result = await transcribe_with_hf(audio_bytes)
+        result = await transcribe_with_openai(audio_bytes)
         
+        # OpenAI returns { "text": "transcribed text" }
         text = result.get("text", "")
-        if not text and "chunks" in result:
-            text = " ".join([chunk.get("text", "") for chunk in result["chunks"]])
         
         return {"text": text.strip()}
     
