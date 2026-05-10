@@ -2,6 +2,8 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" },
-    { "source": "/(.*)", "destination": "/public/$1" }
+    { "source": "/", "destination": "/public/index.html" },
+    { "source": "/audience.html", "destination": "/public/audience.html" },
+    { "source": "/(.+)", "destination": "/public/$1" }
   ]
 }
