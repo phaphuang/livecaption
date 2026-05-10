@@ -79,7 +79,7 @@ async def create_session():
         )
 
 
-# Transcription helper using OpenAI Whisper
+# Transcription helper using OpenAI GPT Realtime Whisper
 async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}"
@@ -88,7 +88,7 @@ async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     # OpenAI expects multipart/form-data
     files = {
         "file": ("audio.webm", audio_bytes, "audio/webm"),
-        "model": (None, "whisper-1")
+        "model": (None, "gpt-realtime-whisper")
     }
     
     async with httpx.AsyncClient() as client:
