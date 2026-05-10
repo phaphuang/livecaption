@@ -273,9 +273,13 @@
     </div>
     
     <script>
-        // Configuration - REPLACE THESE WITH YOUR ACTUAL VALUES
-        const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
-        const SUPABASE_KEY = 'YOUR_ANON_PUBLIC_KEY';
+        // ============================================
+        // ⚠️  CONFIGURATION REQUIRED
+        // Replace with your actual Supabase credentials
+        // Get them from: Supabase Dashboard → Project Settings → API
+        // ============================================
+        const SUPABASE_URL = 'https://okqdpeyyreecgsyzfalg.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rcWRwZXl5cmVlY2dzeXpmYWxnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4NTczNzMsImV4cCI6MjA2MjQzMzM3M30.XXXX_REPLACE_WITH_ACTUAL_KEY';
         
         // Get session from URL
         const urlParams = new URLSearchParams(window.location.search);
@@ -287,6 +291,13 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            // Check if credentials are configured
+            if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_') || !SUPABASE_KEY || SUPABASE_KEY.includes('REPLACE')) {
+                showError('Supabase not configured. Please update SUPABASE_URL and SUPABASE_KEY in audience.html');
+                document.getElementById('status-text').textContent = 'Not configured';
+                return;
+            }
+            
             if (!sessionId) {
                 showError('No session ID provided. Please scan the QR code again.');
                 return;
@@ -295,7 +306,12 @@
             document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
             
             // Initialize Supabase
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            try {
+                supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            } catch (error) {
+                showError('Failed to initialize Supabase: ' + error.message);
+                return;
+            }
             
             // Subscribe to realtime updates
             subscribeToCaptions();
