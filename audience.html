@@ -339,6 +339,8 @@
             loadInitialCaption();
         }
         
+        let pollInterval = null;
+        
         async function subscribeToCaptions() {
             try {
                 console.log('Connecting to Supabase...', SUPABASE_URL);
@@ -358,6 +360,7 @@
                 
                 console.log('Supabase connection test passed');
                 
+                // Try realtime subscription
                 subscription = supabaseClient
                     .channel(`captions:${sessionId}`)
                     .on(
@@ -369,27 +372,39 @@
                             filter: `session_id=eq.${sessionId}`
                         },
                         (payload) => {
-                            console.log('Received update:', payload);
+                            console.log('Received realtime update:', payload);
                             handleCaptionUpdate(payload.new);
                         }
                     )
                     .subscribe((status, err) => {
-                        console.log('Subscription status:', status, err);
+                        console.log('Subscription status:', status);
                         if (status === 'SUBSCRIBED') {
                             updateConnectionStatus('connected');
+                            console.log('Realtime subscription active');
                         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                            updateConnectionStatus('error');
-                            if (err) {
-                                console.error('Subscription error details:', err);
-                                showError('Connection failed: ' + (err.message || err));
-                            }
+                            console.warn('Realtime failed, switching to polling mode');
+                            startPolling();
                         }
                     });
                     
             } catch (error) {
                 console.error('Subscription error:', error);
-                showError('Subscription failed: ' + error.message);
-                updateConnectionStatus('error');
+                startPolling();
+            }
+        }
+        
+        // Fallback polling mechanism
+        function startPolling() {
+            console.log('Starting polling mode (2s interval)');
+            updateConnectionStatus('polling');
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(loadInitialCaption, 2000);
+        }
+        
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
             }
         }
         
@@ -440,7 +455,11 @@
             
             switch (status) {
                 case 'connected':
-                    statusText.textContent = 'Connected';
+                    statusText.textContent = 'Connected (Realtime)';
+                    break;
+                case 'polling':
+                    statusText.textContent = 'Connected (Polling)';
+                    indicator.style.background = '#ffa500';
                     break;
                 case 'error':
                     statusText.textContent = 'Disconnected';
