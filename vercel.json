@@ -1,9 +1,7 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/api/session", "destination": "/api/session.py" },
-    { "source": "/api/transcribe", "destination": "/api/transcribe.py" },
-    { "source": "/api/translate", "destination": "/api/translate.py" },
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
     { "source": "/(.*)", "destination": "/public/$1" }
   ]
 }
