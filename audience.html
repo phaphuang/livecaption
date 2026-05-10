@@ -286,7 +286,7 @@
         const sessionId = urlParams.get('session');
         
         let currentLang = 'en';
-        let supabase = null;
+        let supabaseClient = null;
         let subscription = null;
         
         // Initialize
@@ -307,7 +307,7 @@
             
             // Initialize Supabase
             try {
-                supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             } catch (error) {
                 showError('Failed to initialize Supabase: ' + error.message);
                 return;
@@ -338,7 +338,7 @@
                 console.log('Session ID:', sessionId);
                 
                 // Test Supabase connection first
-                const { data: testData, error: testError } = await supabase
+                const { data: testData, error: testError } = await supabaseClient
                     .from('captions')
                     .select('count', { count: 'exact', head: true });
                 
@@ -351,7 +351,7 @@
                 
                 console.log('Supabase connection test passed');
                 
-                subscription = supabase
+                subscription = supabaseClient
                     .channel(`captions:${sessionId}`)
                     .on(
                         'postgres_changes',
@@ -388,7 +388,7 @@
         
         async function loadInitialCaption() {
             try {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('captions')
                     .select('*')
                     .eq('session_id', sessionId)
