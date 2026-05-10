@@ -273,14 +273,6 @@
     </div>
     
     <script>
-        // ============================================
-        // ⚠️  CONFIGURATION REQUIRED
-        // Replace with your actual Supabase credentials
-        // Get them from: Supabase Dashboard → Project Settings → API
-        // ============================================
-        const SUPABASE_URL = 'https://okqdpeyyreecgsyzfalg.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rcWRwZXl5cmVlY2dzeXpmYWxnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4NTczNzMsImV4cCI6MjA2MjQzMzM3M30.XXXX_REPLACE_WITH_ACTUAL_KEY';
-        
         // Get session from URL
         const urlParams = new URLSearchParams(window.location.search);
         const sessionId = urlParams.get('session');
@@ -288,22 +280,37 @@
         let currentLang = 'en';
         let supabaseClient = null;
         let subscription = null;
+        let SUPABASE_URL = '';
+        let SUPABASE_KEY = '';
         
         // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            // Check if credentials are configured
-            if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_') || !SUPABASE_KEY || SUPABASE_KEY.includes('REPLACE')) {
-                showError('Supabase not configured. Please update SUPABASE_URL and SUPABASE_KEY in audience.html');
-                document.getElementById('status-text').textContent = 'Not configured';
-                return;
-            }
-            
+        document.addEventListener('DOMContentLoaded', async () => {
             if (!sessionId) {
                 showError('No session ID provided. Please scan the QR code again.');
                 return;
             }
             
             document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+            
+            // Fetch Supabase config from API
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error('Failed to load config');
+                }
+                const config = await response.json();
+                SUPABASE_URL = config.supabase_url;
+                SUPABASE_KEY = config.supabase_key;
+                
+                if (!SUPABASE_URL || !SUPABASE_KEY) {
+                    showError('Supabase not configured on server');
+                    document.getElementById('status-text').textContent = 'Not configured';
+                    return;
+                }
+            } catch (error) {
+                showError('Failed to load configuration: ' + error.message);
+                return;
+            }
             
             // Initialize Supabase
             try {

@@ -23,6 +23,15 @@ async def root():
 async def audience():
     return FileResponse(os.path.join(ROOT_DIR, "audience.html"))
 
+# Public config endpoint for client-side Supabase connection
+@app.get("/api/config")
+async def get_config():
+    """Return public Supabase configuration for client-side use."""
+    return {
+        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        "supabase_key": os.environ.get("SUPABASE_KEY", "")  # Use anon key here
+    }
+
 # Environment variables
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
