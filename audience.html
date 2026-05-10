@@ -102,9 +102,10 @@
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
-            max-width: 800px;
+            max-width: 900px;
             width: 100%;
             margin: 0 auto;
+            padding: 0 1rem;
         }
         
         .caption-wrapper {
@@ -112,15 +113,20 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            width: 100%;
         }
         
         .caption-text {
-            font-size: 2.5rem;
-            line-height: 1.4;
+            font-size: 2rem;
+            line-height: 1.5;
             text-align: center;
             color: #f8fafc;
             word-wrap: break-word;
+            overflow-wrap: break-word;
             font-weight: 500;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 1rem 0;
         }
         
         .caption-placeholder {
