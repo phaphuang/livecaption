@@ -19,7 +19,7 @@ WHISPER_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-la
 THAI_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-th"
 CHINESE_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-zh"
 
-# Lazy-loaded Supabase client
+# Lazy-loaded Supabase client (initialized at runtime)
 _supabase_client: Client = None
 
 def get_supabase() -> Client:
