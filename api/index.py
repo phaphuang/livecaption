@@ -86,16 +86,20 @@ async def transcribe_with_hf(audio_bytes: bytes, retry_count: int = 0) -> dict:
         "Content-Type": "audio/webm"
     }
     
+    # Add wait_for_model parameter to handle cold starts
+    url = f"{WHISPER_API_URL}?wait_for_model=true"
+    
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            WHISPER_API_URL,
+            url,
             headers=headers,
             content=audio_bytes,
-            timeout=30.0
+            timeout=60.0  # Longer timeout for model loading
         )
         
-        if response.status_code == 503 and retry_count < 1:
-            await asyncio.sleep(5)
+        # Handle model loading (503) or not found (404)
+        if response.status_code in [503, 404] and retry_count < 2:
+            await asyncio.sleep(10)  # Wait longer for cold start
             return await transcribe_with_hf(audio_bytes, retry_count + 1)
         
         response.raise_for_status()
