@@ -24,6 +24,7 @@ async def audience():
     return FileResponse(os.path.join(ROOT_DIR, "audience.html"))
 
 # Environment variables
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -82,7 +83,7 @@ async def create_session():
 # Transcription helper using OpenAI Whisper
 async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     headers = {
-        "Authorization": f"Bearer {HF_TOKEN}"  # Use OpenAI API key here
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
     }
     
     # OpenAI expects multipart/form-data
@@ -107,10 +108,10 @@ async def transcribe_with_openai(audio_bytes: bytes) -> dict:
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     """Receive audio blob and return English transcription."""
-    if not HF_TOKEN:
+    if not OPENAI_API_KEY:
         return JSONResponse(
             status_code=500,
-            content={"error": "HF_TOKEN not configured"}
+            content={"error": "OPENAI_API_KEY not configured"}
         )
     
     try:
@@ -148,16 +149,20 @@ async def translate_with_hf(text: str, api_url: str, retry_count: int = 0) -> st
     }
     payload = {"inputs": text}
     
+    # Add wait_for_model parameter
+    url = f"{api_url}?wait_for_model=true"
+    
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            api_url,
+            url,
             headers=headers,
             json=payload,
-            timeout=30.0
+            timeout=60.0
         )
         
-        if response.status_code == 503 and retry_count < 1:
-            await asyncio.sleep(5)
+        # Handle model loading (503) or not found (404)
+        if response.status_code in [503, 404] and retry_count < 2:
+            await asyncio.sleep(10)
             return await translate_with_hf(text, api_url, retry_count + 1)
         
         response.raise_for_status()
