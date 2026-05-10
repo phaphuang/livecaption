@@ -309,6 +309,8 @@
         let audioChunks = [];
         let isRecording = false;
         let recordInterval = null;
+        let captionBuffer = [];  // Accumulate recent transcriptions
+        let lastCaptionTime = 0;
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -434,6 +436,10 @@
                 mediaRecorder.stream.getTracks().forEach(track => track.stop());
             }
             
+            // Reset caption buffer
+            captionBuffer = [];
+            lastCaptionTime = 0;
+            
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
             document.getElementById('spinner').classList.remove('active');
@@ -467,16 +473,26 @@
                     return; // No speech detected
                 }
                 
+                // Add to buffer (keep last 3 segments for context)
+                captionBuffer.push(englishText.trim());
+                if (captionBuffer.length > 3) {
+                    captionBuffer.shift();  // Remove oldest
+                }
+                lastCaptionTime = Date.now();
+                
+                // Combine buffer into longer caption
+                const combinedText = captionBuffer.join(' ');
+                
                 // Update preview
                 document.getElementById('spinner').classList.remove('active');
-                document.getElementById('preview-content').textContent = englishText;
+                document.getElementById('preview-content').textContent = combinedText;
                 
                 // 2. Translate and save to Supabase
                 const translateResponse = await fetch('/api/translate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        text: englishText,
+                        text: combinedText,
                         session_id: sessionId
                     })
                 });
