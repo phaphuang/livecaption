@@ -10,14 +10,18 @@ from supabase import create_client, Client
 
 app = FastAPI()
 
+# Get the directory where this file is located
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(CURRENT_DIR)  # Parent of api/ folder
+
 # Serve static files from root directory
 @app.get("/")
 async def root():
-    return FileResponse("index.html")
+    return FileResponse(os.path.join(ROOT_DIR, "index.html"))
 
 @app.get("/audience.html")
 async def audience():
-    return FileResponse("audience.html")
+    return FileResponse(os.path.join(ROOT_DIR, "audience.html"))
 
 # Environment variables
 HF_TOKEN = os.environ.get("HF_TOKEN")
