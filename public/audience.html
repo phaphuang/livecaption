@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveCaption - Audience</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #f1f5f9;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .header-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        
+        h1 span {
+            color: #38bdf8;
+        }
+        
+        .session-badge {
+            font-size: 0.75rem;
+            padding: 0.375rem 0.75rem;
+            background: #334155;
+            border-radius: 9999px;
+            color: #94a3b8;
+        }
+        
+        .lang-selector {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .lang-btn {
+            flex: 1;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid #334155;
+            border-radius: 0.5rem;
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.375rem;
+        }
+        
+        .lang-btn:hover {
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+        
+        .lang-btn.active {
+            background: #38bdf8;
+            border-color: #38bdf8;
+            color: #0f172a;
+        }
+        
+        .lang-flag {
+            font-size: 1.125rem;
+        }
+        
+        main {
+            flex: 1;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .caption-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        
+        .caption-wrapper {
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .caption-text {
+            font-size: 2.5rem;
+            line-height: 1.4;
+            text-align: center;
+            color: #f8fafc;
+            word-wrap: break-word;
+            font-weight: 500;
+        }
+        
+        .caption-placeholder {
+            font-size: 1.125rem;
+            color: #64748b;
+            text-align: center;
+        }
+        
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid #334155;
+            border-top-color: #38bdf8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .status-bar {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: #64748b;
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64748b;
+        }
+        
+        .status-indicator.connected {
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.error {
+            background: #ef4444;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .error-message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1e293b;
+            border: 1px solid #ef4444;
+            border-radius: 1rem;
+            padding: 2rem;
+            text-align: center;
+            display: none;
+        }
+        
+        .error-message.active {
+            display: block;
+        }
+        
+        .error-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .error-title {
+            font-size: 1.25rem;
+            color: #ef4444;
+            margin-bottom: 0.5rem;
+        }
+        
+        .error-desc {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+            .caption-text {
+                font-size: 2rem;
+            }
+            
+            .lang-btn {
+                font-size: 0.75rem;
+                padding: 0.5rem;
+            }
+        }
+        
+        @media (max-width: 375px) {
+            .caption-text {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-top">
+            <h1>Live<span>Caption</span></h1>
+            <span class="session-badge" id="session-badge">Session: ---</span>
+        </div>
+        <div class="lang-selector">
+            <button class="lang-btn active" data-lang="en" onclick="selectLang('en')">
+                <span class="lang-flag">🇺🇸</span>
+                <span>English</span>
+            </button>
+            <button class="lang-btn" data-lang="th" onclick="selectLang('th')">
+                <span class="lang-flag">🇹🇭</span>
+                <span>ภาษาไทย</span>
+            </button>
+            <button class="lang-btn" data-lang="zh" onclick="selectLang('zh')">
+                <span class="lang-flag">🇨🇳</span>
+                <span>中文</span>
+            </button>
+        </div>
+    </header>
+    
+    <main>
+        <div class="caption-container">
+            <div class="caption-wrapper" id="caption-wrapper">
+                <div class="caption-placeholder" id="caption-placeholder">
+                    <div class="spinner"></div>
+                    <div>Waiting for captions...</div>
+                </div>
+                <div class="caption-text" id="caption-text" style="display: none;"></div>
+            </div>
+        </div>
+    </main>
+    
+    <div class="status-bar">
+        <span class="status-indicator" id="status-indicator"></span>
+        <span id="status-text">Connecting...</span>
+    </div>
+    
+    <div class="error-message" id="error-message">
+        <div class="error-icon">⚠️</div>
+        <div class="error-title">Connection Error</div>
+        <div class="error-desc">Please check your internet connection and refresh.</div>
+    </div>
+    
+    <script>
+        // Configuration - REPLACE THESE WITH YOUR ACTUAL VALUES
+        const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
+        const SUPABASE_KEY = 'YOUR_ANON_PUBLIC_KEY';
+        
+        // Get session from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId = urlParams.get('session');
+        
+        let currentLang = 'en';
+        let supabase = null;
+        let subscription = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!sessionId) {
+                showError('No session ID provided. Please scan the QR code again.');
+                return;
+            }
+            
+            document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+            
+            // Initialize Supabase
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            
+            // Subscribe to realtime updates
+            subscribeToCaptions();
+            
+            // Load initial caption
+            loadInitialCaption();
+        });
+        
+        function selectLang(lang) {
+            currentLang = lang;
+            
+            // Update button states
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.lang === lang);
+            });
+            
+            // Refresh caption display
+            loadInitialCaption();
+        }
+        
+        async function subscribeToCaptions() {
+            try {
+                subscription = supabase
+                    .channel(`captions:${sessionId}`)
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: '*',
+                            schema: 'public',
+                            table: 'captions',
+                            filter: `session_id=eq.${sessionId}`
+                        },
+                        (payload) => {
+                            handleCaptionUpdate(payload.new);
+                        }
+                    )
+                    .subscribe((status) => {
+                        if (status === 'SUBSCRIBED') {
+                            updateConnectionStatus('connected');
+                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                            updateConnectionStatus('error');
+                        }
+                    });
+                    
+            } catch (error) {
+                console.error('Subscription error:', error);
+                updateConnectionStatus('error');
+            }
+        }
+        
+        async function loadInitialCaption() {
+            try {
+                const { data, error } = await supabase
+                    .from('captions')
+                    .select('*')
+                    .eq('session_id', sessionId)
+                    .single();
+                
+                if (error && error.code !== 'PGRST116') {
+                    throw error;
+                }
+                
+                if (data && data[currentLang]) {
+                    displayCaption(data[currentLang]);
+                }
+                
+            } catch (error) {
+                console.error('Error loading initial caption:', error);
+            }
+        }
+        
+        function handleCaptionUpdate(data) {
+            if (!data) return;
+            
+            const text = data[currentLang];
+            if (text && text.trim()) {
+                displayCaption(text);
+            }
+        }
+        
+        function displayCaption(text) {
+            const placeholder = document.getElementById('caption-placeholder');
+            const captionText = document.getElementById('caption-text');
+            
+            placeholder.style.display = 'none';
+            captionText.style.display = 'block';
+            captionText.textContent = text;
+        }
+        
+        function updateConnectionStatus(status) {
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            
+            indicator.className = 'status-indicator ' + status;
+            
+            switch (status) {
+                case 'connected':
+                    statusText.textContent = 'Connected';
+                    break;
+                case 'error':
+                    statusText.textContent = 'Disconnected';
+                    break;
+                default:
+                    statusText.textContent = 'Connecting...';
+            }
+        }
+        
+        function showError(message) {
+            document.getElementById('error-message').querySelector('.error-desc').textContent = message;
+            document.getElementById('error-message').classList.add('active');
+            document.getElementById('caption-placeholder').style.display = 'none';
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (subscription) {
+                subscription.unsubscribe();
+            }
+        });
+    </script>
+</body>
+</html>
