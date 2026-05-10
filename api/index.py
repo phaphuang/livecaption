@@ -30,7 +30,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # API URLs
-OPENAI_API_URL = "https://api.openai.com/v1/realtime/transcription_sessions"
+OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # Lazy-loaded Supabase client (initialized at runtime)
@@ -88,7 +88,7 @@ async def transcribe_with_openai(audio_bytes: bytes) -> dict:
     # OpenAI expects multipart/form-data
     files = {
         "file": ("audio.webm", audio_bytes, "audio/webm"),
-        "model": (None, "gpt-realtime-whisper")
+        "model": (None, "gpt-4o-transcribe")
     }
     
     async with httpx.AsyncClient() as client:
