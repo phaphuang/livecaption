@@ -1,7 +1,8 @@
 {
   "version": 2,
   "routes": [
-    { "handle": "filesystem" },
-    { "src": "/api/(.*)", "dest": "/api/index.py" }
+    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "src": "/audience.html", "dest": "/audience.html" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
