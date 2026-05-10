@@ -19,10 +19,14 @@ WHISPER_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-la
 THAI_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-th"
 CHINESE_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-zh"
 
-# Initialize Supabase
-supabase: Client = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Lazy-loaded Supabase client
+_supabase_client: Client = None
+
+def get_supabase() -> Client:
+    global _supabase_client
+    if _supabase_client is None and SUPABASE_URL and SUPABASE_KEY:
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _supabase_client
 
 
 # Health check
@@ -35,6 +39,7 @@ async def root():
 @app.post("/api/session")
 async def create_session():
     """Create a new session and return session_id."""
+    supabase = get_supabase()
     if not supabase:
         return JSONResponse(
             status_code=500,
@@ -162,6 +167,7 @@ async def translate(request: TranslateRequest):
             content={"error": "HF_TOKEN not configured"}
         )
     
+    supabase = get_supabase()
     if not supabase:
         return JSONResponse(
             status_code=500,
