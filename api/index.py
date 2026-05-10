@@ -3,11 +3,21 @@ import uuid
 import asyncio
 import httpx
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from supabase import create_client, Client
 
 app = FastAPI()
+
+# Serve static files from root directory
+@app.get("/")
+async def root():
+    return FileResponse("index.html")
+
+@app.get("/audience.html")
+async def audience():
+    return FileResponse("audience.html")
 
 # Environment variables
 HF_TOKEN = os.environ.get("HF_TOKEN")
