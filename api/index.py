@@ -31,8 +31,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # API URLs
 OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
-THAI_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-th"
-CHINESE_API_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-zh"
+OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # Lazy-loaded Supabase client (initialized at runtime)
 _supabase_client: Client = None
@@ -141,49 +140,52 @@ class TranslateRequest(BaseModel):
     session_id: str
 
 
-# Translation helper
-async def translate_with_hf(text: str, api_url: str, retry_count: int = 0) -> str:
+# Translation helper using OpenAI GPT-4
+async def translate_with_openai(text: str, target_lang: str) -> str:
     headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {"inputs": text}
     
-    # Add wait_for_model parameter
-    url = f"{api_url}?wait_for_model=true"
+    lang_names = {"th": "Thai", "zh": "Chinese"}
+    lang_name = lang_names.get(target_lang, target_lang)
+    
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": f"You are a translator. Translate the following English text to {lang_name}. Return only the translation, nothing else."
+            },
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "temperature": 0.3
+    }
     
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            url,
+            OPENAI_CHAT_URL,
             headers=headers,
             json=payload,
-            timeout=60.0
+            timeout=30.0
         )
-        
-        # Handle model loading (503) or not found (404)
-        if response.status_code in [503, 404] and retry_count < 2:
-            await asyncio.sleep(10)
-            return await translate_with_hf(text, api_url, retry_count + 1)
         
         response.raise_for_status()
         result = response.json()
-        
-        if isinstance(result, list) and len(result) > 0:
-            if isinstance(result[0], list):
-                return result[0][0].get("translation_text", "")
-            elif isinstance(result[0], dict):
-                return result[0].get("translation_text", "")
-        return ""
+        return result["choices"][0]["message"]["content"].strip()
 
 
 # Translate endpoint
 @app.post("/api/translate")
 async def translate(request: TranslateRequest):
     """Translate English text to Thai and Chinese, store in Supabase."""
-    if not HF_TOKEN:
+    if not OPENAI_API_KEY:
         return JSONResponse(
             status_code=500,
-            content={"error": "HF_TOKEN not configured"}
+            content={"error": "OPENAI_API_KEY not configured"}
         )
     
     supabase = get_supabase()
@@ -197,9 +199,9 @@ async def translate(request: TranslateRequest):
         en_text = request.text.strip()
         session_id = request.session_id
         
-        # Translate in parallel
-        th_task = translate_with_hf(en_text, THAI_API_URL)
-        zh_task = translate_with_hf(en_text, CHINESE_API_URL)
+        # Translate in parallel using OpenAI
+        th_task = translate_with_openai(en_text, "th")
+        zh_task = translate_with_openai(en_text, "zh")
         
         th_text, zh_text = await asyncio.gather(th_task, zh_task)
         
