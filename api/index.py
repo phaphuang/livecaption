@@ -30,7 +30,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # API URLs
-OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
+OPENAI_API_URL = "https://api.openai.com/v1/realtime/transcription_sessions"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # Lazy-loaded Supabase client (initialized at runtime)
