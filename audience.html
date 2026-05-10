@@ -334,6 +334,23 @@
         
         async function subscribeToCaptions() {
             try {
+                console.log('Connecting to Supabase...', SUPABASE_URL);
+                console.log('Session ID:', sessionId);
+                
+                // Test Supabase connection first
+                const { data: testData, error: testError } = await supabase
+                    .from('captions')
+                    .select('count', { count: 'exact', head: true });
+                
+                if (testError) {
+                    console.error('Supabase connection test failed:', testError);
+                    showError('Database connection failed: ' + testError.message);
+                    updateConnectionStatus('error');
+                    return;
+                }
+                
+                console.log('Supabase connection test passed');
+                
                 subscription = supabase
                     .channel(`captions:${sessionId}`)
                     .on(
@@ -345,19 +362,26 @@
                             filter: `session_id=eq.${sessionId}`
                         },
                         (payload) => {
+                            console.log('Received update:', payload);
                             handleCaptionUpdate(payload.new);
                         }
                     )
-                    .subscribe((status) => {
+                    .subscribe((status, err) => {
+                        console.log('Subscription status:', status, err);
                         if (status === 'SUBSCRIBED') {
                             updateConnectionStatus('connected');
-                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                             updateConnectionStatus('error');
+                            if (err) {
+                                console.error('Subscription error details:', err);
+                                showError('Connection failed: ' + (err.message || err));
+                            }
                         }
                     });
                     
             } catch (error) {
                 console.error('Subscription error:', error);
+                showError('Subscription failed: ' + error.message);
                 updateConnectionStatus('error');
             }
         }
