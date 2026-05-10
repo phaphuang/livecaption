@@ -396,7 +396,7 @@
                 
                 updateStatus('live');
                 
-                // Start continuous recording in 5-second chunks
+                // Start continuous recording in 3-second chunks
                 startRecordingCycle();
                 
             } catch (error) {
@@ -416,7 +416,7 @@
                     // Restart immediately for next chunk
                     setTimeout(() => startRecordingCycle(), 100);
                 }
-            }, 5000);  // 5 seconds for better context
+            }, 3000);  // 3 seconds for faster updates
         }
         
         function stopRecording() {
