@@ -301,15 +301,11 @@
     </main>
     
     <script>
-        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-        const SUPABASE_KEY = 'YOUR_SUPABASE_KEY';
-        
         let sessionId = null;
-        let mediaRecorder = null;
-        let audioChunks = [];
+        let recognition = null;
         let isRecording = false;
-        let recordInterval = null;
-        let isProcessing = false;  // Prevent overlapping API calls
+        let translateDebounce = null;
+        let lastSentText = '';
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -358,141 +354,121 @@
             }
         }
         
-        async function toggleRecording() {
+        function toggleRecording() {
             if (isRecording) {
                 stopRecording();
             } else {
-                await startRecording();
+                startRecording();
             }
         }
         
-        async function startRecording() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        function startRecording() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                alert('Speech Recognition is not supported in this browser. Please use Chrome or Edge.');
+                return;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.lang = 'en-US';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
+            
+            recognition.onresult = (event) => {
+                let interimText = '';
+                let finalText = '';
                 
-                mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'audio/webm;codecs=opus'
-                });
-                
-                audioChunks = [];
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
-                        audioChunks.push(event.data);
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalText += transcript;
+                    } else {
+                        interimText += transcript;
                     }
-                };
+                }
                 
-                mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    await processAudio(audioBlob);
-                    audioChunks = [];
-                };
+                // Show interim results immediately (grey) + final (white)
+                const previewContent = document.getElementById('preview-content');
+                document.getElementById('spinner').classList.remove('active');
                 
+                if (finalText) {
+                    previewContent.innerHTML = finalText;
+                    sendForTranslation(finalText.trim());
+                } else if (interimText) {
+                    previewContent.innerHTML = '<span style="color:#64748b">' + interimText + '</span>';
+                }
+            };
+            
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error === 'not-allowed') {
+                    alert('Microphone access denied. Please allow microphone access.');
+                    stopRecording();
+                }
+            };
+            
+            recognition.onend = () => {
+                // Auto-restart if still recording (browser stops after silence)
+                if (isRecording) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.log('Restarting recognition...');
+                    }
+                }
+            };
+            
+            try {
+                recognition.start();
                 isRecording = true;
                 document.getElementById('mic-btn').classList.add('recording');
                 document.getElementById('mic-text').textContent = 'Click to stop';
                 document.getElementById('preview-section').classList.add('active');
                 document.getElementById('spinner').classList.add('active');
-                
                 updateStatus('live');
-                
-                // Start continuous recording in 3-second chunks
-                startRecordingCycle();
-                
             } catch (error) {
-                alert('Microphone access denied. Please allow microphone access and try again.');
-                console.error('Error accessing microphone:', error);
+                alert('Failed to start speech recognition: ' + error.message);
             }
-        }
-        
-        function startRecordingCycle() {
-            if (!isRecording) return;
-            
-            mediaRecorder.start();
-            
-            recordInterval = setTimeout(() => {
-                if (mediaRecorder.state === 'recording') {
-                    mediaRecorder.stop();
-                    // Restart immediately for next chunk
-                    setTimeout(() => startRecordingCycle(), 100);
-                }
-            }, 3000);  // 3 seconds for faster updates
         }
         
         function stopRecording() {
             isRecording = false;
             
-            if (recordInterval) {
-                clearTimeout(recordInterval);
+            if (recognition) {
+                recognition.stop();
+                recognition = null;
             }
             
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
+            if (translateDebounce) {
+                clearTimeout(translateDebounce);
             }
-            
-            // Stop all tracks
-            if (mediaRecorder && mediaRecorder.stream) {
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
-            }
-            
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
             document.getElementById('spinner').classList.remove('active');
-            
             updateStatus('waiting');
         }
         
-        async function processAudio(audioBlob) {
-            if (!sessionId || isProcessing) return;
-            isProcessing = true;
+        function sendForTranslation(text) {
+            if (!sessionId || !text || text === lastSentText) return;
+            lastSentText = text;
             
-            try {
-                // 1. Transcribe audio
-                const formData = new FormData();
-                formData.append('audio', audioBlob, 'audio.webm');
-                
-                const transcribeResponse = await fetch('/api/transcribe', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const transcribeData = await transcribeResponse.json();
-                
-                if (transcribeData.error) {
-                    console.error('Transcription error:', transcribeData.error);
-                    return;
-                }
-                
-                const englishText = transcribeData.text;
-                
-                if (!englishText.trim()) {
-                    return; // No speech detected
-                }
-                
-                // Update preview immediately
-                document.getElementById('spinner').classList.remove('active');
-                document.getElementById('preview-content').textContent = englishText;
-                
-                // 2. Translate and save to Supabase (don't wait)
+            // Debounce: wait 300ms to batch rapid final results
+            if (translateDebounce) clearTimeout(translateDebounce);
+            translateDebounce = setTimeout(() => {
                 fetch('/api/translate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        text: englishText,
+                        text: text,
                         session_id: sessionId
                     })
                 }).then(res => res.json()).then(data => {
-                    if (data.error) {
-                        console.error('Translation error:', data.error);
-                    }
+                    if (data.error) console.error('Translation error:', data.error);
                 }).catch(err => console.error('Translation failed:', err));
-                
-            } catch (error) {
-                console.error('Error processing audio:', error);
-            } finally {
-                isProcessing = false;
-            }
+            }, 300);
         }
         
         function updateStatus(status) {
