@@ -446,8 +446,7 @@
                 });
                 
                 dgSocket = new WebSocket(
-                    `wss://api.deepgram.com/v1/listen?${dgParams}`,
-                    ['token', deepgramApiKey]
+                    `wss://api.deepgram.com/v1/listen?${dgParams}&token=${encodeURIComponent(deepgramApiKey)}`
                 );
                 
                 dgSocket.onopen = () => {
