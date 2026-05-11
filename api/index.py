@@ -58,44 +58,52 @@ async def root():
     return {"status": "ok", "message": "LiveCaption API"}
 
 
-# Validate OpenAI API key for Realtime API (WebRTC)
+# Create ephemeral token for OpenAI Realtime API (WebRTC)
 @app.get("/api/realtime-token")
 async def get_realtime_token():
-    """Validate OpenAI API key for client-side WebRTC connection."""
+    """Create an ephemeral token for client-side WebRTC connection to OpenAI Realtime API."""
     if not OPENAI_API_KEY:
         return JSONResponse(
             status_code=500,
             content={"error": "OPENAI_API_KEY not configured"}
         )
     
-    # For WebRTC, client connects directly to OpenAI with the API key
-    # We just validate the key exists and is accessible
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.openai.com/v1/models",
+            response = await client.post(
+                "https://api.openai.com/v1/realtime/sessions",
                 headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}"
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
                 },
-                timeout=5.0
+                json={
+                    "model": "gpt-4o-mini-realtime-preview",
+                    "voice": "alloy",
+                    "modalities": ["audio", "text"],
+                    "input_audio_transcription": {
+                        "model": "whisper-1"
+                    },
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 500
+                    }
+                },
+                timeout=10.0
             )
             response.raise_for_status()
-            
-            # Return the API key for client-side use (ephemeral token approach)
-            return {
-                "client_secret": {
-                    "value": OPENAI_API_KEY
-                }
-            }
+            data = response.json()
+            return data
     except httpx.HTTPStatusError as e:
         return JSONResponse(
             status_code=502,
-            content={"error": f"Invalid OpenAI API key: {e.response.text}"}
+            content={"error": f"Failed to create realtime session: {e.response.text}"}
         )
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"API key validation error: {str(e)}"}
+            content={"error": f"Realtime token error: {str(e)}"}
         )
 
 
