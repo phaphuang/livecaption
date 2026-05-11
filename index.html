@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LiveCaption - Presenter</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@deepgram/sdk@3.11.3/dist/umd/deepgram.umd.min.js"></script>
+    <script src="https://unpkg.com/@deepgram/sdk@3.9.0/dist/umd/deepgram.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -439,9 +439,27 @@
                 });
                 
                 console.log('Creating Deepgram client with key:', deepgramApiKey.slice(0, 10) + '...');
+                console.log('Available globals:', Object.keys(window).filter(k => k.toLowerCase().includes('deepgram')));
                 
                 // Create Deepgram client using SDK
-                dgClient = window.deepgram.DeepgramClient.createClient(deepgramApiKey);
+                const DeepgramModule = window.Deepgram || window.deepgram || window['@deepgram/sdk'];
+                console.log('Deepgram module:', DeepgramModule);
+                
+                if (!DeepgramModule) {
+                    throw new Error('Deepgram SDK not loaded. Available: ' + 
+                        Object.keys(window).filter(k => k.toLowerCase().includes('deep')));
+                }
+                
+                // Try different SDK patterns
+                if (DeepgramModule.DeepgramClient) {
+                    // v3.2+ pattern: new DeepgramClient({ apiKey })
+                    dgClient = new DeepgramModule.DeepgramClient({ apiKey: deepgramApiKey });
+                } else if (DeepgramModule.createClient) {
+                    // Alternative pattern
+                    dgClient = DeepgramModule.createClient(deepgramApiKey);
+                } else {
+                    throw new Error('Unknown Deepgram SDK structure: ' + Object.keys(DeepgramModule).join(', '));
+                }
                 
                 // Create live transcription connection
                 dgConnection = dgClient.listen.v1.createConnection({
