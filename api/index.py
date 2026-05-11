@@ -71,13 +71,13 @@ async def get_realtime_token():
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.openai.com/v1/realtime/sessions",
+                "https://api.openai.com/v1/realtime/transcription_sessions",
                 headers={
                     "Authorization": f"Bearer {OPENAI_API_KEY}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "gpt-4o-mini-realtime-preview",
+                    "model": "gpt-realtime-whisper",
                     "modalities": ["text"],
                     "input_audio_transcription": {
                         "model": "gpt-realtime-whisper"
