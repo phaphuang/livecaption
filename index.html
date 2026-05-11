@@ -308,6 +308,10 @@
         let lastSentInterim = '';
         let lastSentFinal = '';
         let fullTranscript = '';  // Accumulated finalized text
+        let lastActivityTime = 0;
+        let preemptiveRestartTimer = null;
+        let watchdogTimer = null;
+        let isRestarting = false;
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -373,6 +377,7 @@
             rec.maxAlternatives = 1;
             
             rec.onresult = (event) => {
+                lastActivityTime = Date.now();
                 let interimText = '';
                 let newFinal = '';
                 
@@ -399,6 +404,12 @@
                 }
             };
             
+            rec.onstart = () => {
+                lastActivityTime = Date.now();
+                isRestarting = false;
+                console.log('Recognition started');
+            };
+            
             rec.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
                 if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
@@ -410,31 +421,80 @@
             
             rec.onend = () => {
                 console.log('Recognition ended, isRecording:', isRecording);
-                // Auto-restart if still recording (browser stops after silence)
                 if (isRecording) {
-                    // Create fresh instance to avoid InvalidStateError
+                    safeRestart();
+                }
+            };
+            
+            return rec;
+        }
+        
+        // Centralized safe restart logic
+        function safeRestart() {
+            if (!isRecording || isRestarting) return;
+            isRestarting = true;
+            
+            // Try to stop current instance cleanly
+            if (recognition) {
+                try {
+                    recognition.onend = null;
+                    recognition.onerror = null;
+                    recognition.onresult = null;
+                    recognition.abort();
+                } catch (e) {}
+            }
+            
+            setTimeout(() => {
+                if (!isRecording) return;
+                try {
+                    recognition = createRecognition();
+                    recognition.start();
+                    console.log('Recognition restarted');
+                } catch (e) {
+                    console.error('Restart failed, retrying...', e);
                     setTimeout(() => {
                         if (isRecording) {
                             try {
                                 recognition = createRecognition();
                                 recognition.start();
-                                console.log('Recognition restarted');
-                            } catch (e) {
-                                console.error('Restart failed:', e);
-                                // Try again
-                                setTimeout(() => {
-                                    if (isRecording) {
-                                        recognition = createRecognition();
-                                        try { recognition.start(); } catch (err) { console.error(err); }
-                                    }
-                                }, 500);
+                            } catch (err) {
+                                console.error('Second restart failed:', err);
+                                isRestarting = false;
                             }
                         }
-                    }, 100);
+                    }, 500);
                 }
-            };
+            }, 250);
+        }
+        
+        // Watchdog: detect if recognition has been silent too long (Chrome bug)
+        function startWatchdogs() {
+            stopWatchdogs();
+            lastActivityTime = Date.now();
             
-            return rec;
+            // Watchdog: if no event for 15s, force restart (Chrome can hang silently)
+            watchdogTimer = setInterval(() => {
+                if (!isRecording || isRestarting) return;
+                const idleMs = Date.now() - lastActivityTime;
+                if (idleMs > 15000) {
+                    console.warn('Watchdog: no activity for', idleMs, 'ms, restarting');
+                    safeRestart();
+                }
+            }, 5000);
+            
+            // Preemptive restart every 25s to avoid Chrome's stuck state
+            preemptiveRestartTimer = setInterval(() => {
+                if (!isRecording || isRestarting) return;
+                console.log('Preemptive restart (anti-stuck)');
+                safeRestart();
+            }, 25000);
+        }
+        
+        function stopWatchdogs() {
+            if (watchdogTimer) clearInterval(watchdogTimer);
+            if (preemptiveRestartTimer) clearInterval(preemptiveRestartTimer);
+            watchdogTimer = null;
+            preemptiveRestartTimer = null;
         }
         
         function startRecording() {
@@ -446,24 +506,33 @@
             }
             
             try {
+                isRecording = true;  // Set before creating so onstart works correctly
                 recognition = createRecognition();
                 recognition.start();
-                isRecording = true;
+                startWatchdogs();
                 document.getElementById('mic-btn').classList.add('recording');
                 document.getElementById('mic-text').textContent = 'Click to stop';
                 document.getElementById('preview-section').classList.add('active');
                 document.getElementById('spinner').classList.add('active');
                 updateStatus('live');
             } catch (error) {
+                isRecording = false;
                 alert('Failed to start speech recognition: ' + error.message);
             }
         }
         
         function stopRecording() {
             isRecording = false;
+            isRestarting = false;
+            stopWatchdogs();
             
             if (recognition) {
-                recognition.stop();
+                try {
+                    recognition.onend = null;
+                    recognition.onerror = null;
+                    recognition.onresult = null;
+                    recognition.stop();
+                } catch (e) {}
                 recognition = null;
             }
             
