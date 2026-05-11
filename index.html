@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LiveCaption - Presenter</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@deepgram/sdk@3.11.3/dist/umd/deepgram.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -418,8 +419,11 @@
         }
         
         // ========================================
-        // Deepgram Nova-3 WebSocket STT
+        // Deepgram SDK STT
         // ========================================
+        
+        let dgClient = null;
+        let dgConnection = null;
         
         async function startDeepgram() {
             try {
@@ -434,81 +438,40 @@
                     }
                 });
                 
-                // Build Deepgram WebSocket URL with streaming params
-                const dgParams = new URLSearchParams({
+                console.log('Creating Deepgram client with key:', deepgramApiKey.slice(0, 10) + '...');
+                
+                // Create Deepgram client using SDK
+                dgClient = window.deepgram.DeepgramClient.createClient(deepgramApiKey);
+                
+                // Create live transcription connection
+                dgConnection = dgClient.listen.v1.createConnection({
                     model: 'nova-3',
                     language: 'en',
-                    smart_format: 'true',
-                    interim_results: 'true',
-                    vad_events: 'true',
-                    endpointing: '300',
-                    utterance_end_ms: '1500'
+                    smart_format: true,
+                    interim_results: true,
+                    endpointing: 300,
+                    utterance_end_ms: 1500
                 });
                 
-                dgSocket = new WebSocket(
-                    `wss://api.deepgram.com/v1/listen?${dgParams}&token=${encodeURIComponent(deepgramApiKey)}`
-                );
-                
-                dgSocket.onopen = () => {
-                    console.log('Deepgram WebSocket connected');
+                // Handle transcription results
+                dgConnection.on('message', (data) => {
                     lastActivityTime = Date.now();
+                    console.log('Deepgram message:', data);
                     
-                    // Start MediaRecorder with Opus codec, 20ms chunks
-                    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                        ? 'audio/webm;codecs=opus'
-                        : 'audio/webm';
-                    
-                    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-                    
-                    mediaRecorder.ondataavailable = ({ data }) => {
-                        if (dgSocket && dgSocket.readyState === WebSocket.OPEN && data.size > 0) {
-                            dgSocket.send(data);
-                        }
-                    };
-                    
-                    mediaRecorder.start(20);  // 20ms chunks for minimal latency
-                    console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
-                };
-                
-                dgSocket.onmessage = ({ data }) => {
-                    lastActivityTime = Date.now();
-                    const msg = JSON.parse(data);
-                    console.log('Deepgram msg:', msg.type, msg);
-                    
-                    // Remove spinner on any meaningful event
-                    if (msg.type === 'SpeechStarted' || msg.type === 'Results') {
+                    // Remove spinner on first result
+                    if (data.type === 'Results' || data.type === 'SpeechStarted') {
                         document.getElementById('spinner').classList.remove('active');
                     }
                     
-                    // Handle VAD events
-                    if (msg.type === 'SpeechStarted') {
-                        console.log('Speech started detected');
-                        return;
-                    }
-                    
-                    // Handle utterance end
-                    if (msg.type === 'UtteranceEnd') {
-                        console.log('Utterance ended, committing interim');
-                        if (currentInterim && currentInterim.trim()) {
-                            fullTranscript += currentInterim + ' ';
-                            currentInterim = '';
-                            const previewContent = document.getElementById('preview-content');
-                            previewContent.textContent = fullTranscript;
-                            sendToServer(fullTranscript.trim(), true);
-                        }
-                        return;
-                    }
-                    
-                    // Handle transcription results
-                    if (msg.type === 'Results' && msg.channel && msg.channel.alternatives && msg.channel.alternatives.length > 0) {
-                        const transcript = msg.channel.alternatives[0].transcript;
-                        console.log('Transcript:', transcript, 'is_final:', msg.is_final);
+                    if (data.type === 'Results' && data.channel?.alternatives?.[0]) {
+                        const transcript = data.channel.alternatives[0].transcript;
+                        console.log('Transcript:', transcript, 'is_final:', data.is_final);
                         
                         if (!transcript || !transcript.trim()) return;
                         
                         const previewContent = document.getElementById('preview-content');
                         
-                        if (msg.is_final) {
+                        if (data.is_final) {
                             // Final result - commit to transcript
                             fullTranscript += transcript + ' ';
                             currentInterim = '';
@@ -525,53 +488,73 @@
                             sendInterim(display.trim());
                         }
                     }
-                };
+                });
                 
-                dgSocket.onerror = (err) => {
-                    console.error('Deepgram WebSocket error:', err);
-                    // Fall back to Web Speech API on connection error
+                dgConnection.on('close', () => {
+                    console.log('Deepgram connection closed');
                     if (isRecording && !isRestarting) {
-                        console.warn('Deepgram failed, falling back to Web Speech API');
+                        console.warn('Deepgram disconnected, falling back to Web Speech API');
                         stopDeepgram();
-                        sttProvider = 'webspeech';
-                        // Small delay then start Web Speech
-                        setTimeout(() => {
-                            if (isRecording) {
-                                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                                if (SpeechRecognition) {
-                                    recognition = createRecognition();
-                                    recognition.start();
-                                    startWatchdogs();
-                                    document.getElementById('stt-badge').textContent = 'Web Speech API (fallback)';
-                                }
+                        fallbackToWebSpeech();
+                    }
+                });
+                
+                dgConnection.on('error', (err) => {
+                    console.error('Deepgram error:', err);
+                    if (isRecording && !isRestarting) {
+                        console.warn('Deepgram error, falling back to Web Speech API');
+                        stopDeepgram();
+                        fallbackToWebSpeech();
+                    }
+                });
+                
+                // Connect and wait for open
+                dgConnection.connect();
+                await dgConnection.waitForOpen();
+                console.log('Deepgram connection opened');
+                
+                // Start MediaRecorder with Opus codec, 20ms chunks
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? 'audio/webm;codecs=opus'
+                    : 'audio/webm';
+                
+                mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+                
+                mediaRecorder.ondataavailable = ({ data }) => {
+                    if (data.size > 0) {
+                        // Convert Blob to ArrayBuffer for SDK
+                        data.arrayBuffer().then(buffer => {
+                            if (dgConnection && dgConnection.getReadyState() === 1) {
+                                dgConnection.send(buffer);
                             }
-                        }, 500);
+                        });
                     }
                 };
                 
-                dgSocket.onclose = (event) => {
-                    console.log('Deepgram WebSocket closed:', event.code, event.reason);
-                    if (isRecording && !isRestarting && event.code !== 1000) {
-                        console.warn('Deepgram connection lost, falling back to Web Speech API');
-                        stopDeepgram();
-                        sttProvider = 'webspeech';
-                        setTimeout(() => {
-                            if (isRecording) {
-                                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                                if (SpeechRecognition) {
-                                    recognition = createRecognition();
-                                    recognition.start();
-                                    startWatchdogs();
-                                    document.getElementById('stt-badge').textContent = 'Web Speech API (fallback)';
-                                }
-                            }
-                        }, 500);
-                    }
-                };
+                mediaRecorder.start(20);  // 20ms chunks
+                console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
                 
             } catch (error) {
                 console.error('Deepgram start failed:', error);
-                throw error;
+                // Fall back to Web Speech API
+                fallbackToWebSpeech();
+            }
+        }
+        
+        function fallbackToWebSpeech() {
+            if (!isRecording) return;
+            console.log('Falling back to Web Speech API');
+            sttProvider = 'webspeech';
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                recognition = createRecognition();
+                recognition.start();
+                startWatchdogs();
+                document.getElementById('stt-badge').textContent = 'Web Speech API (fallback)';
+            } else {
+                alert('Speech recognition not supported in this browser');
+                stopRecording();
             }
         }
         
@@ -581,16 +564,12 @@
             }
             mediaRecorder = null;
             
-            if (dgSocket) {
-                try {
-                    // Send close frame to Deepgram
-                    if (dgSocket.readyState === WebSocket.OPEN) {
-                        dgSocket.send(JSON.stringify({ type: 'CloseStream' }));
-                    }
-                    dgSocket.close();
-                } catch (e) {}
-                dgSocket = null;
+            if (dgConnection) {
+                try { dgConnection.requestClose(); } catch (e) {}
+                dgConnection = null;
             }
+            
+            dgClient = null;
             
             if (mediaStream) {
                 mediaStream.getTracks().forEach(t => t.stop());
