@@ -473,15 +473,22 @@
                 dgSocket.onmessage = ({ data }) => {
                     lastActivityTime = Date.now();
                     const msg = JSON.parse(data);
+                    console.log('Deepgram msg:', msg.type, msg);
+                    
+                    // Remove spinner on any meaningful event
+                    if (msg.type === 'SpeechStarted' || msg.type === 'Results') {
+                        document.getElementById('spinner').classList.remove('active');
+                    }
                     
                     // Handle VAD events
                     if (msg.type === 'SpeechStarted') {
-                        document.getElementById('spinner').classList.remove('active');
+                        console.log('Speech started detected');
                         return;
                     }
                     
                     // Handle utterance end
                     if (msg.type === 'UtteranceEnd') {
+                        console.log('Utterance ended, committing interim');
                         if (currentInterim && currentInterim.trim()) {
                             fullTranscript += currentInterim + ' ';
                             currentInterim = '';
@@ -493,12 +500,13 @@
                     }
                     
                     // Handle transcription results
-                    if (msg.channel && msg.channel.alternatives && msg.channel.alternatives.length > 0) {
+                    if (msg.type === 'Results' && msg.channel && msg.channel.alternatives && msg.channel.alternatives.length > 0) {
                         const transcript = msg.channel.alternatives[0].transcript;
-                        if (!transcript) return;
+                        console.log('Transcript:', transcript, 'is_final:', msg.is_final);
+                        
+                        if (!transcript || !transcript.trim()) return;
                         
                         const previewContent = document.getElementById('preview-content');
-                        document.getElementById('spinner').classList.remove('active');
                         
                         if (msg.is_final) {
                             // Final result - commit to transcript
