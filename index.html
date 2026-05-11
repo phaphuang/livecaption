@@ -369,7 +369,7 @@
             try {
                 console.log('🎤 Starting recording...');
                 
-                // 1. Get ephemeral token from our server
+                // 1. Get API key from our server
                 console.log('📡 Getting API key from server...');
                 const tokenRes = await fetch('/api/realtime-token');
                 const tokenData = await tokenRes.json();
@@ -380,52 +380,40 @@
                     throw new Error(tokenData.error);
                 }
                 
-                const ephemeralKey = tokenData.client_secret?.value;
-                if (!ephemeralKey) {
+                const apiKey = tokenData.client_secret?.value;
+                if (!apiKey) {
                     throw new Error('No API key returned from server');
                 }
                 
-                console.log('✅ Got API key (length:', ephemeralKey.length, ')');
+                console.log('✅ Got API key (length:', apiKey.length, ')');
                 
                 // 2. Get microphone
                 console.log('🎙️ Requesting microphone access...');
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 console.log('✅ Microphone access granted');
                 
-                // 3. Create WebRTC peer connection
-                console.log('🔗 Creating WebRTC peer connection...');
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' }
-                    ]
+                // 3. Create WebSocket connection to OpenAI Realtime API
+                console.log('🔗 Creating WebSocket connection...');
+                const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper`;
+                const ws = new WebSocket(wsUrl, ['realtime'], {
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'OpenAI-Beta': 'realtime=v1'
+                    }
                 });
                 
-                // Add connection state logging
-                peerConnection.onconnectionstatechange = () => {
-                    console.log('🔌 WebRTC connection state:', peerConnection.connectionState);
-                };
+                // Store WebSocket reference
+                window.realtimeWs = ws;
                 
-                peerConnection.oniceconnectionstatechange = () => {
-                    console.log('❄️ ICE connection state:', peerConnection.iceConnectionState);
-                };
-                
-                // Add audio track
-                localStream.getAudioTracks().forEach(track => {
-                    console.log('🎵 Adding audio track:', track.kind, track.label);
-                    peerConnection.addTrack(track, localStream);
-                });
-                
-                // Create data channel for receiving events
-                console.log('📡 Creating data channel...');
-                dataChannel = peerConnection.createDataChannel('oai-events');
-                
-                dataChannel.onopen = () => {
-                    console.log('✅ Data channel open - sending session config');
-                    // Configure the session for transcription only
-                    dataChannel.send(JSON.stringify({
+                ws.onopen = () => {
+                    console.log('✅ WebSocket connected - configuring session');
+                    
+                    // Configure session for transcription
+                    ws.send(JSON.stringify({
                         type: 'session.update',
                         session: {
                             modalities: ['text'],
+                            instructions: 'Transcribe the audio accurately.',
                             input_audio_transcription: {
                                 model: 'gpt-realtime-whisper'
                             },
@@ -437,78 +425,28 @@
                             }
                         }
                     }));
+                    
+                    // Start sending audio
+                    startAudioStreaming(ws);
                 };
                 
-                dataChannel.onerror = (error) => {
-                    console.error('❌ Data channel error:', error);
-                };
-                
-                dataChannel.onclose = () => {
-                    console.log('🔌 Data channel closed');
-                };
-                
-                dataChannel.onmessage = (event) => {
+                ws.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        console.log('📨 Received event:', data.type);
+                        console.log('📨 WebSocket event:', data.type);
                         handleRealtimeEvent(data);
                     } catch (e) {
-                        console.error('❌ Failed to parse event:', event.data);
+                        console.error('❌ Failed to parse WebSocket event:', event.data);
                     }
                 };
                 
-                // 4. Create offer
-                console.log('📤 Creating WebRTC offer...');
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                console.log('✅ WebRTC offer created');
+                ws.onerror = (error) => {
+                    console.error('❌ WebSocket error:', error);
+                };
                 
-                // Wait for ICE gathering to complete
-                await new Promise(resolve => {
-                    if (peerConnection.iceGatheringState === 'complete') {
-                        resolve();
-                    } else {
-                        peerConnection.onicegatheringstatechange = () => {
-                            if (peerConnection.iceGatheringState === 'complete') {
-                                resolve();
-                            }
-                        };
-                    }
-                });
-                
-                console.log('🧊 ICE gathering complete');
-                
-                // 5. Send offer to OpenAI Realtime API
-                console.log('📡 Sending offer to OpenAI Realtime API...');
-                const sdpResponse = await fetch(
-                    'https://api.openai.com/v1/realtime/transcription_sessions?model=gpt-realtime-whisper',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${ephemeralKey}`,
-                            'Content-Type': 'application/sdp'
-                        },
-                        body: offer.sdp
-                    }
-                );
-                
-                console.log('📋 OpenAI response status:', sdpResponse.status);
-                const responseText = await sdpResponse.text();
-                console.log('📄 OpenAI response body:', responseText);
-                
-                if (!sdpResponse.ok) {
-                    console.error('❌ WebRTC signaling failed:', responseText);
-                    console.error('📤 Sent SDP offer:', offer.sdp);
-                    throw new Error(`WebRTC signaling failed (${sdpResponse.status}): ${responseText}`);
-                }
-                
-                // 6. Set remote description
-                console.log('📥 Received answer from OpenAI');
-                await peerConnection.setRemoteDescription({
-                    type: 'answer',
-                    sdp: responseText
-                });
-                console.log('✅ Remote description set');
+                ws.onclose = (event) => {
+                    console.log('🔌 WebSocket closed:', event.code, event.reason);
+                };
                 
                 // Update UI
                 isRecording = true;
@@ -518,13 +456,47 @@
                 document.getElementById('spinner').classList.add('active');
                 updateStatus('live');
                 
-                console.log('🎉 WebRTC connection established - streaming audio');
+                console.log('🎉 WebSocket connection initiated');
                 
             } catch (error) {
                 console.error('❌ Failed to start recording:', error);
                 alert('Failed to start: ' + error.message);
                 stopRecording();
             }
+        }
+        
+        function startAudioStreaming(ws) {
+            console.log('🎵 Starting audio streaming...');
+            
+            // Create audio processor
+            const audioContext = new AudioContext({ sampleRate: 24000 });
+            const source = audioContext.createMediaStreamSource(localStream);
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+            
+            processor.onaudioprocess = (event) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    const inputData = event.inputBuffer.getChannelData(0);
+                    
+                    // Convert Float32Array to Int16Array (16-bit PCM)
+                    const int16Data = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+                    }
+                    
+                    // Send audio data
+                    ws.send(int16Data.buffer);
+                }
+            };
+            
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+            
+            // Store processor for cleanup
+            window.audioProcessor = processor;
+            window.audioSource = source;
+            window.audioContext = audioContext;
+            
+            console.log('✅ Audio streaming started');
         }
         
         function handleRealtimeEvent(event) {
@@ -632,16 +604,28 @@
         function stopRecording() {
             isRecording = false;
             
-            // Close data channel
-            if (dataChannel) {
-                dataChannel.close();
-                dataChannel = null;
+            // Close WebSocket
+            if (window.realtimeWs) {
+                window.realtimeWs.close();
+                window.realtimeWs = null;
             }
             
-            // Close peer connection
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
+            // Stop audio processor
+            if (window.audioProcessor) {
+                window.audioProcessor.disconnect();
+                window.audioProcessor = null;
+            }
+            
+            // Stop audio source
+            if (window.audioSource) {
+                window.audioSource.disconnect();
+                window.audioSource = null;
+            }
+            
+            // Close audio context
+            if (window.audioContext) {
+                window.audioContext.close();
+                window.audioContext = null;
             }
             
             // Stop audio tracks
