@@ -394,10 +394,9 @@
                 
                 // 3. Create WebSocket connection to OpenAI Realtime API
                 console.log('🔗 Creating WebSocket connection...');
-                const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper`;
+                const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper&api_key=${encodeURIComponent(apiKey)}`;
                 const ws = new WebSocket(wsUrl, ['realtime'], {
                     headers: {
-                        'Authorization': `Bearer ${apiKey}`,
                         'OpenAI-Beta': 'realtime=v1'
                     }
                 });
