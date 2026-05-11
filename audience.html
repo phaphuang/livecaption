@@ -111,12 +111,12 @@
         
         .caption-wrapper {
             min-height: 200px;
-            max-height: 300px;
+            max-height: 400px;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
             width: 100%;
-            overflow: hidden;
+            overflow-y: auto;
             position: relative;
         }
         
@@ -129,21 +129,11 @@
             overflow-wrap: break-word;
             font-weight: 500;
             padding: 0;
+            transition: color 0.2s ease;
         }
         
-        .caption-text .line {
-            display: block;
-            margin-bottom: 0.5rem;
-            transition: opacity 0.3s ease;
-        }
-        
-        .caption-text .current {
-            color: #38bdf8;
-            font-weight: 600;
-        }
-        
-        .caption-text .interim {
-            color: #64748b;
+        .caption-text.interim {
+            color: #94a3b8;
             font-style: italic;
         }
         
@@ -354,11 +344,10 @@
         function selectLang(lang) {
             currentLang = lang;
             
-            // Clear history when switching languages to avoid mixing
-            captionHistory = [];
+            // Clear state when switching languages
             lastEnText = '';
             lastTranslatedText = '';
-            isCurrentInterim = false;
+            lastDisplayedText = '';
             
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -487,48 +476,32 @@
             }
         }
         
-        // Caption history for teleprompter-style display
-        let captionHistory = [];
-        const MAX_HISTORY_LINES = 4;
-        let isCurrentInterim = false;
+        let lastDisplayedText = '';
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
             const captionText = document.getElementById('caption-text');
             
+            if (!text || !text.trim()) return;
+            if (text === lastDisplayedText) return;
+            lastDisplayedText = text;
+            
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            // If last line was interim, replace it instead of adding new
-            if (isCurrentInterim && captionHistory.length > 0) {
-                captionHistory[captionHistory.length - 1] = text;
-            } else if (!isInterim && isCurrentInterim && captionHistory.length > 0) {
-                // Finalize: replace interim with final translation
-                captionHistory[captionHistory.length - 1] = text;
+            // Show as continuous flowing text
+            if (isInterim) {
+                captionText.className = 'caption-text interim';
             } else {
-                captionHistory.push(text);
+                captionText.className = 'caption-text';
             }
-            isCurrentInterim = isInterim;
+            captionText.textContent = text;
             
-            // Keep only last N lines
-            while (captionHistory.length > MAX_HISTORY_LINES) {
-                captionHistory.shift();
+            // Auto-scroll to bottom
+            const wrapper = captionText.parentElement;
+            if (wrapper) {
+                wrapper.scrollTop = wrapper.scrollHeight;
             }
-            
-            // Build HTML
-            let html = '';
-            captionHistory.forEach((line, index) => {
-                const isCurrent = index === captionHistory.length - 1;
-                let className = 'line';
-                if (isCurrent && isInterim) {
-                    className = 'line interim';
-                } else if (isCurrent) {
-                    className = 'line current';
-                }
-                html += `<span class="${className}">${escapeHtml(line)}</span>`;
-            });
-            
-            captionText.innerHTML = html;
         }
         
         function escapeHtml(text) {

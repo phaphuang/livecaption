@@ -307,6 +307,7 @@
         let interimDebounce = null;
         let lastSentInterim = '';
         let lastSentFinal = '';
+        let fullTranscript = '';  // Accumulated finalized text
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -379,12 +380,12 @@
             
             recognition.onresult = (event) => {
                 let interimText = '';
-                let finalText = '';
+                let newFinal = '';
                 
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalText += transcript;
+                        newFinal += transcript;
                     } else {
                         interimText += transcript;
                     }
@@ -393,14 +394,16 @@
                 const previewContent = document.getElementById('preview-content');
                 document.getElementById('spinner').classList.remove('active');
                 
-                if (finalText) {
-                    // Final result: show white, send for translation
-                    previewContent.innerHTML = finalText;
-                    sendToServer(finalText.trim(), true);
+                if (newFinal) {
+                    // Append finalized text to running transcript
+                    fullTranscript += newFinal;
+                    previewContent.textContent = fullTranscript;
+                    sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
-                    // Interim: show grey, push English to Supabase (debounced)
-                    previewContent.innerHTML = '<span style="color:#94a3b8">' + interimText + '</span>';
-                    sendInterim(interimText.trim());
+                    // Show accumulated + current interim (grey)
+                    const display = fullTranscript + interimText;
+                    previewContent.innerHTML = fullTranscript + '<span style="color:#94a3b8">' + interimText + '</span>';
+                    sendInterim(display.trim());
                 }
             };
             
@@ -447,6 +450,8 @@
             if (interimDebounce) {
                 clearTimeout(interimDebounce);
             }
+            
+            fullTranscript = '';
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
