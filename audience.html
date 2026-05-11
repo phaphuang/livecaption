@@ -507,13 +507,14 @@
                 return;
             }
             
-            // For other languages: show translation if available, else show English as placeholder
+            // For other languages: only show translated text, never flash English
             if (langText && langText.trim() && langText !== lastTranslatedText) {
                 lastTranslatedText = langText;
                 updateCurrentLine(langText);
-            } else if (enText && enText.trim() && enText !== lastEnText) {
+            }
+            // Track English changes but don't display them
+            if (enText && enText.trim()) {
                 lastEnText = enText;
-                updateCurrentLine(enText, true);  // Show as interim placeholder
             }
         }
         
