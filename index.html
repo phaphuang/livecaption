@@ -529,14 +529,42 @@
                 
                 dgSocket.onerror = (err) => {
                     console.error('Deepgram WebSocket error:', err);
+                    // Fall back to Web Speech API on connection error
+                    if (isRecording && !isRestarting) {
+                        console.warn('Deepgram failed, falling back to Web Speech API');
+                        stopDeepgram();
+                        sttProvider = 'webspeech';
+                        // Small delay then start Web Speech
+                        setTimeout(() => {
+                            if (isRecording) {
+                                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                                if (SpeechRecognition) {
+                                    recognition = createRecognition();
+                                    recognition.start();
+                                    startWatchdogs();
+                                    document.getElementById('stt-badge').textContent = 'Web Speech API (fallback)';
+                                }
+                            }
+                        }, 500);
+                    }
                 };
                 
                 dgSocket.onclose = (event) => {
                     console.log('Deepgram WebSocket closed:', event.code, event.reason);
-                    if (isRecording && !isRestarting) {
-                        console.log('Reconnecting Deepgram...');
+                    if (isRecording && !isRestarting && event.code !== 1000) {
+                        console.warn('Deepgram connection lost, falling back to Web Speech API');
+                        stopDeepgram();
+                        sttProvider = 'webspeech';
                         setTimeout(() => {
-                            if (isRecording) startDeepgram();
+                            if (isRecording) {
+                                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                                if (SpeechRecognition) {
+                                    recognition = createRecognition();
+                                    recognition.start();
+                                    startWatchdogs();
+                                    document.getElementById('stt-badge').textContent = 'Web Speech API (fallback)';
+                                }
+                            }
                         }, 500);
                     }
                 };
