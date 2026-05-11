@@ -80,7 +80,7 @@ async def get_realtime_token():
                     "model": "gpt-4o-mini-realtime-preview",
                     "modalities": ["text"],
                     "input_audio_transcription": {
-                        "model": "gpt-4o-mini-transcribe"
+                        "model": "gpt-realtime-whisper"
                     }
                 },
                 timeout=10.0
