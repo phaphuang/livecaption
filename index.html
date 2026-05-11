@@ -493,19 +493,20 @@
                 );
                 
                 console.log('📋 OpenAI response status:', sdpResponse.status);
+                const responseText = await sdpResponse.text();
+                console.log('📄 OpenAI response body:', responseText);
                 
                 if (!sdpResponse.ok) {
-                    const errText = await sdpResponse.text();
-                    console.error('❌ WebRTC signaling failed:', errText);
-                    throw new Error(`WebRTC signaling failed (${sdpResponse.status}): ${errText}`);
+                    console.error('❌ WebRTC signaling failed:', responseText);
+                    console.error('📤 Sent SDP offer:', offer.sdp);
+                    throw new Error(`WebRTC signaling failed (${sdpResponse.status}): ${responseText}`);
                 }
                 
                 // 6. Set remote description
-                const answerSdp = await sdpResponse.text();
                 console.log('📥 Received answer from OpenAI');
                 await peerConnection.setRemoteDescription({
                     type: 'answer',
-                    sdp: answerSdp
+                    sdp: responseText
                 });
                 console.log('✅ Remote description set');
                 
