@@ -528,10 +528,14 @@
         }
         
         function handleRealtimeEvent(event) {
+            // Log ALL events for debugging
+            console.log('📨 Event received:', event.type, event);
+            
             // Handle different event types from OpenAI Realtime API
             switch (event.type) {
                 case 'conversation.item.input_audio_transcription.delta':
                     // Streaming partial transcription
+                    console.log('📝 Transcription delta:', event.delta);
                     if (event.delta) {
                         currentTranscript += event.delta;
                         document.getElementById('spinner').classList.remove('active');
@@ -541,6 +545,7 @@
                     
                 case 'conversation.item.input_audio_transcription.completed':
                     // Final transcription for this speech segment
+                    console.log('✅ Transcription completed:', event.transcript);
                     if (event.transcript) {
                         currentTranscript = event.transcript;
                         document.getElementById('spinner').classList.remove('active');
@@ -552,22 +557,53 @@
                     break;
                     
                 case 'input_audio_buffer.speech_started':
+                    console.log('🎤 Speech started');
                     document.getElementById('spinner').classList.add('active');
                     break;
                     
                 case 'input_audio_buffer.speech_stopped':
+                    console.log('🔇 Speech stopped');
                     document.getElementById('spinner').classList.remove('active');
                     break;
                     
                 case 'error':
-                    console.error('Realtime API error:', event.error);
+                    console.error('❌ Realtime API error:', event.error);
+                    break;
+                    
+                case 'session.created':
+                    console.log('✅ Session created');
+                    break;
+                    
+                case 'session.updated':
+                    console.log('✅ Session updated');
+                    break;
+                    
+                case 'response.created':
+                    console.log('✅ Response created');
+                    break;
+                    
+                case 'response.done':
+                    console.log('✅ Response done');
+                    break;
+                    
+                case 'response.text.delta':
+                    console.log('📝 Text delta:', event.delta);
+                    break;
+                    
+                case 'response.text.done':
+                    console.log('✅ Text done:', event.text);
+                    break;
+                    
+                case 'response.audio_transcript.delta':
+                    console.log('📝 Audio transcript delta:', event.delta);
+                    break;
+                    
+                case 'response.audio_transcript.done':
+                    console.log('✅ Audio transcript done:', event.transcript);
                     break;
                     
                 default:
-                    // Log other events for debugging
-                    if (event.type !== 'response.done' && event.type !== 'session.created' && event.type !== 'session.updated') {
-                        console.log('Realtime event:', event.type);
-                    }
+                    console.log('❓ Unknown event type:', event.type, event);
                     break;
             }
         }
