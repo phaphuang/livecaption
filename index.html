@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LiveCaption - Presenter</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://unpkg.com/@deepgram/sdk@3.9.0/dist/umd/deepgram.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -419,11 +418,8 @@
         }
         
         // ========================================
-        // Deepgram SDK STT
+        // Deepgram WebSocket STT
         // ========================================
-        
-        let dgClient = null;
-        let dgConnection = null;
         
         async function startDeepgram() {
             try {
@@ -438,65 +434,72 @@
                     }
                 });
                 
-                console.log('Creating Deepgram client with key:', deepgramApiKey.slice(0, 10) + '...');
-                console.log('Available globals:', Object.keys(window).filter(k => k.toLowerCase().includes('deepgram')));
-                
-                // Create Deepgram client using SDK
-                const DeepgramModule = window.Deepgram || window.deepgram || window['@deepgram/sdk'];
-                console.log('Deepgram module:', DeepgramModule);
-                
-                if (!DeepgramModule) {
-                    throw new Error('Deepgram SDK not loaded. Available: ' + 
-                        Object.keys(window).filter(k => k.toLowerCase().includes('deep')));
+                // Strip "Deepgram:" prefix if present
+                let key = deepgramApiKey;
+                if (key.startsWith('Deepgram:')) {
+                    key = key.substring('Deepgram:'.length);
                 }
                 
-                // Try different SDK patterns
-                if (DeepgramModule.DeepgramClient) {
-                    // v3.2+ pattern: new DeepgramClient({ apiKey })
-                    dgClient = new DeepgramModule.DeepgramClient({ apiKey: deepgramApiKey });
-                } else if (DeepgramModule.createClient) {
-                    // Alternative pattern
-                    dgClient = DeepgramModule.createClient(deepgramApiKey);
-                } else {
-                    throw new Error('Unknown Deepgram SDK structure: ' + Object.keys(DeepgramModule).join(', '));
-                }
+                console.log('Connecting to Deepgram, key:', key.slice(0, 8) + '...');
                 
-                // Create live transcription connection
-                dgConnection = dgClient.listen.v1.createConnection({
+                // Build WebSocket URL
+                const dgParams = new URLSearchParams({
                     model: 'nova-3',
                     language: 'en',
-                    smart_format: true,
-                    interim_results: true,
-                    endpointing: 300,
-                    utterance_end_ms: 1500
+                    smart_format: 'true',
+                    interim_results: 'true',
+                    endpointing: '300',
+                    utterance_end_ms: '1500'
                 });
                 
-                // Handle transcription results
-                dgConnection.on('message', (data) => {
+                const wsUrl = `wss://api.deepgram.com/v1/listen?${dgParams.toString()}`;
+                console.log('WebSocket URL:', wsUrl);
+                
+                dgSocket = new WebSocket(wsUrl, ['token', key]);
+                
+                dgSocket.onopen = () => {
+                    console.log('Deepgram WebSocket connected!');
                     lastActivityTime = Date.now();
-                    console.log('Deepgram message:', data);
                     
-                    // Remove spinner on first result
-                    if (data.type === 'Results' || data.type === 'SpeechStarted') {
+                    // Start MediaRecorder with Opus codec, 20ms chunks
+                    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                        ? 'audio/webm;codecs=opus'
+                        : 'audio/webm';
+                    
+                    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+                    
+                    mediaRecorder.ondataavailable = ({ data }) => {
+                        if (dgSocket && dgSocket.readyState === WebSocket.OPEN && data.size > 0) {
+                            dgSocket.send(data);
+                        }
+                    };
+                    
+                    mediaRecorder.start(20);  // 20ms chunks for minimal latency
+                    console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
+                };
+                
+                dgSocket.onmessage = ({ data }) => {
+                    lastActivityTime = Date.now();
+                    const msg = JSON.parse(data);
+                    
+                    // Remove spinner on any result
+                    if (msg.type === 'Results' || msg.type === 'SpeechStarted') {
                         document.getElementById('spinner').classList.remove('active');
                     }
                     
-                    if (data.type === 'Results' && data.channel?.alternatives?.[0]) {
-                        const transcript = data.channel.alternatives[0].transcript;
-                        console.log('Transcript:', transcript, 'is_final:', data.is_final);
-                        
+                    // Handle transcription results
+                    if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
+                        const transcript = msg.channel.alternatives[0].transcript;
                         if (!transcript || !transcript.trim()) return;
                         
                         const previewContent = document.getElementById('preview-content');
                         
-                        if (data.is_final) {
-                            // Final result - commit to transcript
+                        if (msg.is_final) {
                             fullTranscript += transcript + ' ';
                             currentInterim = '';
                             previewContent.textContent = fullTranscript;
                             sendToServer(fullTranscript.trim(), true);
                         } else {
-                            // Interim result - show immediately (optimistic UI)
                             currentInterim = transcript;
                             lastInterimTime = Date.now();
                             const display = fullTranscript + transcript;
@@ -506,55 +509,26 @@
                             sendInterim(display.trim());
                         }
                     }
-                });
+                };
                 
-                dgConnection.on('close', () => {
-                    console.log('Deepgram connection closed');
+                dgSocket.onerror = (err) => {
+                    console.error('Deepgram WebSocket error:', err);
                     if (isRecording && !isRestarting) {
-                        console.warn('Deepgram disconnected, falling back to Web Speech API');
                         stopDeepgram();
                         fallbackToWebSpeech();
-                    }
-                });
-                
-                dgConnection.on('error', (err) => {
-                    console.error('Deepgram error:', err);
-                    if (isRecording && !isRestarting) {
-                        console.warn('Deepgram error, falling back to Web Speech API');
-                        stopDeepgram();
-                        fallbackToWebSpeech();
-                    }
-                });
-                
-                // Connect and wait for open
-                dgConnection.connect();
-                await dgConnection.waitForOpen();
-                console.log('Deepgram connection opened');
-                
-                // Start MediaRecorder with Opus codec, 20ms chunks
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                    ? 'audio/webm;codecs=opus'
-                    : 'audio/webm';
-                
-                mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-                
-                mediaRecorder.ondataavailable = ({ data }) => {
-                    if (data.size > 0) {
-                        // Convert Blob to ArrayBuffer for SDK
-                        data.arrayBuffer().then(buffer => {
-                            if (dgConnection && dgConnection.getReadyState() === 1) {
-                                dgConnection.send(buffer);
-                            }
-                        });
                     }
                 };
                 
-                mediaRecorder.start(20);  // 20ms chunks
-                console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
+                dgSocket.onclose = (event) => {
+                    console.log('Deepgram closed:', event.code, event.reason);
+                    if (isRecording && !isRestarting && event.code !== 1000) {
+                        stopDeepgram();
+                        fallbackToWebSpeech();
+                    }
+                };
                 
             } catch (error) {
                 console.error('Deepgram start failed:', error);
-                // Fall back to Web Speech API
                 fallbackToWebSpeech();
             }
         }
@@ -582,12 +556,15 @@
             }
             mediaRecorder = null;
             
-            if (dgConnection) {
-                try { dgConnection.requestClose(); } catch (e) {}
-                dgConnection = null;
+            if (dgSocket) {
+                try {
+                    if (dgSocket.readyState === WebSocket.OPEN) {
+                        dgSocket.send(JSON.stringify({ type: 'CloseStream' }));
+                    }
+                    dgSocket.close();
+                } catch (e) {}
+                dgSocket = null;
             }
-            
-            dgClient = null;
             
             if (mediaStream) {
                 mediaStream.getTracks().forEach(t => t.stop());
