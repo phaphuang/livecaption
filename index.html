@@ -364,21 +364,15 @@
             }
         }
         
-        function startRecording() {
+        function createRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const rec = new SpeechRecognition();
+            rec.lang = 'en-US';
+            rec.continuous = true;
+            rec.interimResults = true;
+            rec.maxAlternatives = 1;
             
-            if (!SpeechRecognition) {
-                alert('Speech Recognition is not supported in this browser. Please use Chrome or Edge.');
-                return;
-            }
-            
-            recognition = new SpeechRecognition();
-            recognition.lang = 'en-US';
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.maxAlternatives = 1;
-            
-            recognition.onresult = (event) => {
+            rec.onresult = (event) => {
                 let interimText = '';
                 let newFinal = '';
                 
@@ -395,38 +389,64 @@
                 document.getElementById('spinner').classList.remove('active');
                 
                 if (newFinal) {
-                    // Append finalized text to running transcript
                     fullTranscript += newFinal;
                     previewContent.textContent = fullTranscript;
                     sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
-                    // Show accumulated + current interim (grey)
                     const display = fullTranscript + interimText;
                     previewContent.innerHTML = fullTranscript + '<span style="color:#94a3b8">' + interimText + '</span>';
                     sendInterim(display.trim());
                 }
             };
             
-            recognition.onerror = (event) => {
+            rec.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
-                if (event.error === 'not-allowed') {
+                if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
                     alert('Microphone access denied. Please allow microphone access.');
                     stopRecording();
                 }
+                // Other errors (no-speech, aborted, network) - let onend handle restart
             };
             
-            recognition.onend = () => {
+            rec.onend = () => {
+                console.log('Recognition ended, isRecording:', isRecording);
                 // Auto-restart if still recording (browser stops after silence)
                 if (isRecording) {
-                    try {
-                        recognition.start();
-                    } catch (e) {
-                        console.log('Restarting recognition...');
-                    }
+                    // Create fresh instance to avoid InvalidStateError
+                    setTimeout(() => {
+                        if (isRecording) {
+                            try {
+                                recognition = createRecognition();
+                                recognition.start();
+                                console.log('Recognition restarted');
+                            } catch (e) {
+                                console.error('Restart failed:', e);
+                                // Try again
+                                setTimeout(() => {
+                                    if (isRecording) {
+                                        recognition = createRecognition();
+                                        try { recognition.start(); } catch (err) { console.error(err); }
+                                    }
+                                }, 500);
+                            }
+                        }
+                    }, 100);
                 }
             };
             
+            return rec;
+        }
+        
+        function startRecording() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                alert('Speech Recognition is not supported in this browser. Please use Chrome or Edge.');
+                return;
+            }
+            
             try {
+                recognition = createRecognition();
                 recognition.start();
                 isRecording = true;
                 document.getElementById('mic-btn').classList.add('recording');
