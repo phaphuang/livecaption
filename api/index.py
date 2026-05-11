@@ -58,55 +58,6 @@ async def root():
     return {"status": "ok", "message": "LiveCaption API"}
 
 
-# Create ephemeral token for OpenAI Realtime API (WebRTC)
-@app.get("/api/realtime-token")
-async def get_realtime_token():
-    """Create an ephemeral token for client-side WebRTC connection to OpenAI Realtime API."""
-    if not OPENAI_API_KEY:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "OPENAI_API_KEY not configured"}
-        )
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.openai.com/v1/realtime/sessions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "gpt-4o-mini-realtime-preview",
-                    "voice": "alloy",
-                    "modalities": ["audio", "text"],
-                    "input_audio_transcription": {
-                        "model": "whisper-1"
-                    },
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 500
-                    }
-                },
-                timeout=10.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data
-    except httpx.HTTPStatusError as e:
-        return JSONResponse(
-            status_code=502,
-            content={"error": f"Failed to create realtime session: {e.response.text}"}
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Realtime token error: {str(e)}"}
-        )
-
-
 # Session endpoint
 @app.post("/api/session")
 async def create_session():

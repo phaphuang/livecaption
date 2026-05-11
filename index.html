@@ -301,14 +301,15 @@
     </main>
     
     <script>
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_KEY = 'YOUR_SUPABASE_KEY';
+        
         let sessionId = null;
-        let peerConnection = null;
-        let dataChannel = null;
-        let localStream = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
         let isRecording = false;
-        let translateTimeout = null;
-        let currentTranscript = '';
-        let lastSentText = '';
+        let recordInterval = null;
+        let isProcessing = false;  // Prevent overlapping API calls
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -367,266 +368,131 @@
         
         async function startRecording() {
             try {
-                console.log('🎤 Starting recording...');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // 1. Get ephemeral token from our server
-                console.log('📡 Getting ephemeral token from server...');
-                const tokenRes = await fetch('/api/realtime-token');
-                const tokenData = await tokenRes.json();
-                
-                console.log('📋 Token response:', JSON.stringify(tokenData).substring(0, 200));
-                
-                if (tokenData.error) {
-                    throw new Error(tokenData.error);
-                }
-                
-                const ephemeralKey = tokenData.client_secret?.value;
-                if (!ephemeralKey) {
-                    throw new Error('No ephemeral key in response');
-                }
-                
-                console.log('✅ Got ephemeral token (length:', ephemeralKey.length, ')');
-                
-                // 2. Get microphone
-                console.log('🎙️ Requesting microphone access...');
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                console.log('✅ Microphone access granted');
-                
-                // 3. Create WebRTC peer connection
-                console.log('🔗 Creating WebRTC peer connection...');
-                peerConnection = new RTCPeerConnection();
-                
-                // Add audio track
-                localStream.getAudioTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
                 });
                 
-                // Set up data channel for events
-                dataChannel = peerConnection.createDataChannel('oai-events');
+                audioChunks = [];
                 
-                dataChannel.onopen = () => {
-                    console.log('✅ Data channel open');
-                };
-                
-                dataChannel.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        console.log('📨 Event:', data.type);
-                        handleRealtimeEvent(data);
-                    } catch (e) {
-                        console.error('❌ Failed to parse event:', e);
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
                     }
                 };
                 
-                dataChannel.onerror = (e) => console.error('❌ Data channel error:', e);
-                dataChannel.onclose = () => console.log('🔌 Data channel closed');
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    await processAudio(audioBlob);
+                    audioChunks = [];
+                };
                 
-                // 4. Create and send offer
-                console.log('📤 Creating WebRTC offer...');
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                
-                // 5. Send offer to OpenAI Realtime API via HTTP (supports auth headers)
-                console.log('📡 Sending SDP offer to OpenAI...');
-                const sdpResponse = await fetch(
-                    'https://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${ephemeralKey}`,
-                            'Content-Type': 'application/sdp'
-                        },
-                        body: offer.sdp
-                    }
-                );
-                
-                console.log('� OpenAI response status:', sdpResponse.status);
-                
-                if (!sdpResponse.ok) {
-                    const errText = await sdpResponse.text();
-                    console.error('❌ SDP signaling failed:', errText);
-                    throw new Error(`WebRTC signaling failed (${sdpResponse.status}): ${errText}`);
-                }
-                
-                // 6. Set remote description
-                const answerSdp = await sdpResponse.text();
-                console.log('📥 Got SDP answer from OpenAI');
-                await peerConnection.setRemoteDescription({
-                    type: 'answer',
-                    sdp: answerSdp
-                });
-                console.log('✅ WebRTC connection established');
-                
-                // Update UI
                 isRecording = true;
                 document.getElementById('mic-btn').classList.add('recording');
                 document.getElementById('mic-text').textContent = 'Click to stop';
                 document.getElementById('preview-section').classList.add('active');
                 document.getElementById('spinner').classList.add('active');
+                
                 updateStatus('live');
                 
+                // Start continuous recording in 3-second chunks
+                startRecordingCycle();
+                
             } catch (error) {
-                console.error('❌ Failed to start recording:', error);
-                alert('Failed to start: ' + error.message);
-                stopRecording();
+                alert('Microphone access denied. Please allow microphone access and try again.');
+                console.error('Error accessing microphone:', error);
             }
         }
         
-        function handleRealtimeEvent(event) {
-            // Log ALL events for debugging
-            console.log('📨 Event received:', event.type, event);
+        function startRecordingCycle() {
+            if (!isRecording) return;
             
-            // Handle different event types from OpenAI Realtime API
-            switch (event.type) {
-                case 'response.audio_transcript.delta':
-                    // Streaming partial transcription
-                    console.log('📝 Audio transcript delta:', event.delta);
-                    if (event.delta) {
-                        currentTranscript += event.delta;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                    }
-                    break;
-                    
-                case 'response.audio_transcript.done':
-                    // Final transcription for this speech segment
-                    console.log('✅ Audio transcript done:', event.transcript);
-                    if (event.transcript) {
-                        currentTranscript = event.transcript;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                    }
-                    // Send for translation
-                    sendForTranslation(currentTranscript);
-                    currentTranscript = '';
-                    break;
-                    
-                case 'response.text.delta':
-                    // Text response (if any)
-                    console.log('📝 Text delta:', event.delta);
-                    if (event.delta) {
-                        currentTranscript += event.delta;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                    }
-                    break;
-                    
-                case 'response.text.done':
-                    // Final text response
-                    console.log('✅ Text done:', event.text);
-                    if (event.text) {
-                        currentTranscript = event.text;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                    }
-                    // Send for translation
-                    sendForTranslation(currentTranscript);
-                    currentTranscript = '';
-                    break;
-                    
-                case 'input_audio_buffer.speech_started':
-                    console.log('🎤 Speech started');
-                    document.getElementById('spinner').classList.add('active');
-                    break;
-                    
-                case 'input_audio_buffer.speech_stopped':
-                    console.log('🔇 Speech stopped');
-                    document.getElementById('spinner').classList.remove('active');
-                    break;
-                    
-                case 'error':
-                    console.error('❌ Realtime API error:', event.error);
-                    alert('Transcription error: ' + (event.error?.message || event.error));
-                    break;
-                    
-                case 'session.created':
-                    console.log('✅ Session created');
-                    break;
-                    
-                case 'session.updated':
-                    console.log('✅ Session updated');
-                    break;
-                    
-                case 'response.created':
-                    console.log('✅ Response created');
-                    break;
-                    
-                case 'response.done':
-                    console.log('✅ Response done');
-                    break;
-                    
-                default:
-                    console.log('❓ Unknown event type:', event.type, event);
-                    // Check if this event has transcript/text data we should display
-                    if (event.transcript) {
-                        console.log('🎯 Found transcript in unknown event:', event.transcript);
-                        currentTranscript = event.transcript;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                        sendForTranslation(currentTranscript);
-                        currentTranscript = '';
-                    } else if (event.text) {
-                        console.log('🎯 Found text in unknown event:', event.text);
-                        currentTranscript = event.text;
-                        document.getElementById('spinner').classList.remove('active');
-                        document.getElementById('preview-content').textContent = currentTranscript;
-                        sendForTranslation(currentTranscript);
-                        currentTranscript = '';
-                    }
-                    break;
-            }
-        }
-        
-        function sendForTranslation(text) {
-            if (!text || !text.trim() || !sessionId) return;
-            if (text.trim() === lastSentText) return;  // Skip duplicates
+            mediaRecorder.start();
             
-            lastSentText = text.trim();
-            
-            // Fire-and-forget translation
-            fetch('/api/translate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    text: text.trim(),
-                    session_id: sessionId
-                })
-            }).then(res => res.json()).then(data => {
-                if (data.error) {
-                    console.error('Translation error:', data.error);
+            recordInterval = setTimeout(() => {
+                if (mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    // Restart immediately for next chunk
+                    setTimeout(() => startRecordingCycle(), 100);
                 }
-            }).catch(err => console.error('Translation failed:', err));
+            }, 3000);  // 3 seconds for faster updates
         }
         
         function stopRecording() {
             isRecording = false;
             
-            // Close data channel
-            if (dataChannel) {
-                dataChannel.close();
-                dataChannel = null;
+            if (recordInterval) {
+                clearTimeout(recordInterval);
             }
             
-            // Close peer connection
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
             }
             
-            // Stop audio tracks
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
+            // Stop all tracks
+            if (mediaRecorder && mediaRecorder.stream) {
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
             }
             
-            currentTranscript = '';
-            lastSentText = '';
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
             document.getElementById('spinner').classList.remove('active');
             
             updateStatus('waiting');
+        }
+        
+        async function processAudio(audioBlob) {
+            if (!sessionId || isProcessing) return;
+            isProcessing = true;
+            
+            try {
+                // 1. Transcribe audio
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'audio.webm');
+                
+                const transcribeResponse = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const transcribeData = await transcribeResponse.json();
+                
+                if (transcribeData.error) {
+                    console.error('Transcription error:', transcribeData.error);
+                    return;
+                }
+                
+                const englishText = transcribeData.text;
+                
+                if (!englishText.trim()) {
+                    return; // No speech detected
+                }
+                
+                // Update preview immediately
+                document.getElementById('spinner').classList.remove('active');
+                document.getElementById('preview-content').textContent = englishText;
+                
+                // 2. Translate and save to Supabase (don't wait)
+                fetch('/api/translate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: englishText,
+                        session_id: sessionId
+                    })
+                }).then(res => res.json()).then(data => {
+                    if (data.error) {
+                        console.error('Translation error:', data.error);
+                    }
+                }).catch(err => console.error('Translation failed:', err));
+                
+            } catch (error) {
+                console.error('Error processing audio:', error);
+            } finally {
+                isProcessing = false;
+            }
         }
         
         function updateStatus(status) {
