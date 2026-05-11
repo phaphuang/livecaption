@@ -505,9 +505,9 @@
             
             // Handle different event types from OpenAI Realtime API
             switch (event.type) {
-                case 'conversation.item.input_audio_transcription.delta':
+                case 'response.audio_transcript.delta':
                     // Streaming partial transcription
-                    console.log('📝 Transcription delta:', event.delta);
+                    console.log('📝 Audio transcript delta:', event.delta);
                     if (event.delta) {
                         currentTranscript += event.delta;
                         document.getElementById('spinner').classList.remove('active');
@@ -515,11 +515,34 @@
                     }
                     break;
                     
-                case 'conversation.item.input_audio_transcription.completed':
+                case 'response.audio_transcript.done':
                     // Final transcription for this speech segment
-                    console.log('✅ Transcription completed:', event.transcript);
+                    console.log('✅ Audio transcript done:', event.transcript);
                     if (event.transcript) {
                         currentTranscript = event.transcript;
+                        document.getElementById('spinner').classList.remove('active');
+                        document.getElementById('preview-content').textContent = currentTranscript;
+                    }
+                    // Send for translation
+                    sendForTranslation(currentTranscript);
+                    currentTranscript = '';
+                    break;
+                    
+                case 'response.text.delta':
+                    // Text response (if any)
+                    console.log('📝 Text delta:', event.delta);
+                    if (event.delta) {
+                        currentTranscript += event.delta;
+                        document.getElementById('spinner').classList.remove('active');
+                        document.getElementById('preview-content').textContent = currentTranscript;
+                    }
+                    break;
+                    
+                case 'response.text.done':
+                    // Final text response
+                    console.log('✅ Text done:', event.text);
+                    if (event.text) {
+                        currentTranscript = event.text;
                         document.getElementById('spinner').classList.remove('active');
                         document.getElementById('preview-content').textContent = currentTranscript;
                     }
@@ -540,6 +563,7 @@
                     
                 case 'error':
                     console.error('❌ Realtime API error:', event.error);
+                    alert('Transcription error: ' + (event.error?.message || event.error));
                     break;
                     
                 case 'session.created':
@@ -558,24 +582,24 @@
                     console.log('✅ Response done');
                     break;
                     
-                case 'response.text.delta':
-                    console.log('📝 Text delta:', event.delta);
-                    break;
-                    
-                case 'response.text.done':
-                    console.log('✅ Text done:', event.text);
-                    break;
-                    
-                case 'response.audio_transcript.delta':
-                    console.log('📝 Audio transcript delta:', event.delta);
-                    break;
-                    
-                case 'response.audio_transcript.done':
-                    console.log('✅ Audio transcript done:', event.transcript);
-                    break;
-                    
                 default:
                     console.log('❓ Unknown event type:', event.type, event);
+                    // Check if this event has transcript/text data we should display
+                    if (event.transcript) {
+                        console.log('🎯 Found transcript in unknown event:', event.transcript);
+                        currentTranscript = event.transcript;
+                        document.getElementById('spinner').classList.remove('active');
+                        document.getElementById('preview-content').textContent = currentTranscript;
+                        sendForTranslation(currentTranscript);
+                        currentTranscript = '';
+                    } else if (event.text) {
+                        console.log('🎯 Found text in unknown event:', event.text);
+                        currentTranscript = event.text;
+                        document.getElementById('spinner').classList.remove('active');
+                        document.getElementById('preview-content').textContent = currentTranscript;
+                        sendForTranslation(currentTranscript);
+                        currentTranscript = '';
+                    }
                     break;
             }
         }
