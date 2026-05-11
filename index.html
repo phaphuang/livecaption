@@ -367,9 +367,14 @@
         
         async function startRecording() {
             try {
+                console.log('🎤 Starting recording...');
+                
                 // 1. Get ephemeral token from our server
+                console.log('📡 Getting API key from server...');
                 const tokenRes = await fetch('/api/realtime-token');
                 const tokenData = await tokenRes.json();
+                
+                console.log('📋 Token response:', tokenData);
                 
                 if (tokenData.error) {
                     throw new Error(tokenData.error);
@@ -377,24 +382,45 @@
                 
                 const ephemeralKey = tokenData.client_secret?.value;
                 if (!ephemeralKey) {
-                    throw new Error('No ephemeral key returned');
+                    throw new Error('No API key returned from server');
                 }
                 
+                console.log('✅ Got API key (length:', ephemeralKey.length, ')');
+                
                 // 2. Get microphone
+                console.log('🎙️ Requesting microphone access...');
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                console.log('✅ Microphone access granted');
                 
                 // 3. Create WebRTC peer connection
-                peerConnection = new RTCPeerConnection();
+                console.log('🔗 Creating WebRTC peer connection...');
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' }
+                    ]
+                });
+                
+                // Add connection state logging
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('🔌 WebRTC connection state:', peerConnection.connectionState);
+                };
+                
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log('❄️ ICE connection state:', peerConnection.iceConnectionState);
+                };
                 
                 // Add audio track
                 localStream.getAudioTracks().forEach(track => {
+                    console.log('🎵 Adding audio track:', track.kind, track.label);
                     peerConnection.addTrack(track, localStream);
                 });
                 
                 // Create data channel for receiving events
+                console.log('📡 Creating data channel...');
                 dataChannel = peerConnection.createDataChannel('oai-events');
+                
                 dataChannel.onopen = () => {
-                    console.log('Data channel open - sending session config');
+                    console.log('✅ Data channel open - sending session config');
                     // Configure the session for transcription only
                     dataChannel.send(JSON.stringify({
                         type: 'session.update',
@@ -413,15 +439,47 @@
                     }));
                 };
                 
+                dataChannel.onerror = (error) => {
+                    console.error('❌ Data channel error:', error);
+                };
+                
+                dataChannel.onclose = () => {
+                    console.log('🔌 Data channel closed');
+                };
+                
                 dataChannel.onmessage = (event) => {
-                    handleRealtimeEvent(JSON.parse(event.data));
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('📨 Received event:', data.type);
+                        handleRealtimeEvent(data);
+                    } catch (e) {
+                        console.error('❌ Failed to parse event:', event.data);
+                    }
                 };
                 
                 // 4. Create offer
+                console.log('📤 Creating WebRTC offer...');
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
+                console.log('✅ WebRTC offer created');
+                
+                // Wait for ICE gathering to complete
+                await new Promise(resolve => {
+                    if (peerConnection.iceGatheringState === 'complete') {
+                        resolve();
+                    } else {
+                        peerConnection.onicegatheringstatechange = () => {
+                            if (peerConnection.iceGatheringState === 'complete') {
+                                resolve();
+                            }
+                        };
+                    }
+                });
+                
+                console.log('🧊 ICE gathering complete');
                 
                 // 5. Send offer to OpenAI Realtime API
+                console.log('📡 Sending offer to OpenAI Realtime API...');
                 const sdpResponse = await fetch(
                     'https://api.openai.com/v1/realtime?model=gpt-realtime-mini',
                     {
@@ -434,17 +492,22 @@
                     }
                 );
                 
+                console.log('📋 OpenAI response status:', sdpResponse.status);
+                
                 if (!sdpResponse.ok) {
                     const errText = await sdpResponse.text();
-                    throw new Error(`WebRTC signaling failed: ${errText}`);
+                    console.error('❌ WebRTC signaling failed:', errText);
+                    throw new Error(`WebRTC signaling failed (${sdpResponse.status}): ${errText}`);
                 }
                 
                 // 6. Set remote description
                 const answerSdp = await sdpResponse.text();
+                console.log('📥 Received answer from OpenAI');
                 await peerConnection.setRemoteDescription({
                     type: 'answer',
                     sdp: answerSdp
                 });
+                console.log('✅ Remote description set');
                 
                 // Update UI
                 isRecording = true;
@@ -454,10 +517,10 @@
                 document.getElementById('spinner').classList.add('active');
                 updateStatus('live');
                 
-                console.log('WebRTC connection established - streaming audio');
+                console.log('🎉 WebRTC connection established - streaming audio');
                 
             } catch (error) {
-                console.error('Failed to start recording:', error);
+                console.error('❌ Failed to start recording:', error);
                 alert('Failed to start: ' + error.message);
                 stopRecording();
             }
