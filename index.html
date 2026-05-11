@@ -308,6 +308,8 @@
         let lastSentInterim = '';
         let lastSentFinal = '';
         let fullTranscript = '';  // Accumulated finalized text
+        let currentInterim = '';  // Current interim text (not yet finalized)
+        let lastInterimTime = 0;
         let lastActivityTime = 0;
         let preemptiveRestartTimer = null;
         let watchdogTimer = null;
@@ -395,9 +397,12 @@
                 
                 if (newFinal) {
                     fullTranscript += newFinal;
+                    currentInterim = '';  // Cleared - it became final
                     previewContent.textContent = fullTranscript;
                     sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
+                    currentInterim = interimText;
+                    lastInterimTime = Date.now();
                     const display = fullTranscript + interimText;
                     previewContent.innerHTML = fullTranscript + '<span style="color:#94a3b8">' + interimText + '</span>';
                     sendInterim(display.trim());
@@ -429,10 +434,23 @@
             return rec;
         }
         
-        // Centralized safe restart logic
+        // Centralized safe restart logic - preserves interim text
         function safeRestart() {
             if (!isRecording || isRestarting) return;
             isRestarting = true;
+            
+            // CRITICAL: preserve any in-progress interim text so we don't lose words
+            if (currentInterim && currentInterim.trim()) {
+                fullTranscript += currentInterim;
+                if (!fullTranscript.endsWith(' ')) fullTranscript += ' ';
+                console.log('Preserved interim before restart:', currentInterim);
+                currentInterim = '';
+                // Update preview
+                const previewContent = document.getElementById('preview-content');
+                if (previewContent) previewContent.textContent = fullTranscript;
+                // Send to server as final (so audience gets the words)
+                sendToServer(fullTranscript.trim(), true);
+            }
             
             // Try to stop current instance cleanly
             if (recognition) {
@@ -440,12 +458,16 @@
                     recognition.onend = null;
                     recognition.onerror = null;
                     recognition.onresult = null;
+                    recognition.onstart = null;
                     recognition.abort();
                 } catch (e) {}
             }
             
             setTimeout(() => {
-                if (!isRecording) return;
+                if (!isRecording) {
+                    isRestarting = false;
+                    return;
+                }
                 try {
                     recognition = createRecognition();
                     recognition.start();
@@ -467,27 +489,44 @@
             }, 250);
         }
         
+        // Defer restart while user is actively speaking (interim < 1s old)
+        function deferredRestart(reason) {
+            if (!isRecording || isRestarting) return;
+            
+            const interimAge = Date.now() - lastInterimTime;
+            const userSpeaking = currentInterim && interimAge < 1000;
+            
+            if (userSpeaking) {
+                // Wait until user pauses, retry shortly
+                console.log('Deferring restart (user speaking):', reason);
+                setTimeout(() => deferredRestart(reason), 1500);
+                return;
+            }
+            
+            console.log('Restart trigger:', reason);
+            safeRestart();
+        }
+        
         // Watchdog: detect if recognition has been silent too long (Chrome bug)
         function startWatchdogs() {
             stopWatchdogs();
             lastActivityTime = Date.now();
             
-            // Watchdog: if no event for 15s, force restart (Chrome can hang silently)
+            // Watchdog: if no event for 20s, force restart (Chrome can hang silently)
             watchdogTimer = setInterval(() => {
                 if (!isRecording || isRestarting) return;
                 const idleMs = Date.now() - lastActivityTime;
-                if (idleMs > 15000) {
-                    console.warn('Watchdog: no activity for', idleMs, 'ms, restarting');
-                    safeRestart();
+                if (idleMs > 20000) {
+                    console.warn('Watchdog: no activity for', idleMs, 'ms');
+                    safeRestart();  // Force restart - user clearly not speaking
                 }
             }, 5000);
             
-            // Preemptive restart every 25s to avoid Chrome's stuck state
+            // Preemptive restart every 45s during pauses (anti-stuck)
             preemptiveRestartTimer = setInterval(() => {
                 if (!isRecording || isRestarting) return;
-                console.log('Preemptive restart (anti-stuck)');
-                safeRestart();
-            }, 25000);
+                deferredRestart('preemptive');
+            }, 45000);
         }
         
         function stopWatchdogs() {
@@ -541,6 +580,7 @@
             }
             
             fullTranscript = '';
+            currentInterim = '';
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
