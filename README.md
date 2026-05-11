@@ -11,8 +11,10 @@ A full-stack live multilingual captioning web app that allows a presenter to spe
 - 🎤 **Presenter**: Speak in English, see live captions
 - 🌐 **Audience**: Read captions in English, Thai, or Chinese
 - 📱 **Mobile-first**: Works on any device with a browser
-- ⚡ **Real-time**: Live sync via Supabase Realtime
+- ⚡ **Real-time**: ~150ms STT latency via Deepgram Nova-3 WebSocket streaming
 - 🔗 **Easy sharing**: QR code + shareable URL
+- 🔤 **Font size control**: Audience can adjust caption text size
+- 🔄 **Graceful fallback**: Works with Web Speech API if Deepgram is unavailable
 
 ---
 
@@ -22,8 +24,8 @@ A full-stack live multilingual captioning web app that allows a presenter to spe
 |-----------|------------|
 | Frontend | HTML + Vanilla JavaScript |
 | Backend | FastAPI (Python) on Vercel |
-| Speech-to-Text | Hugging Face Whisper |
-| Translation | Hugging Face Helsinki-NLP |
+| Speech-to-Text | **Deepgram Nova-3** (WebSocket streaming) with Web Speech API fallback |
+| Translation | OpenAI GPT-4o-mini (with streaming support) |
 | Real-time | Supabase Realtime |
 | Hosting | Vercel |
 
@@ -60,22 +62,26 @@ ALTER TABLE captions REPLICA IDENTITY FULL;
 3. Go to **Database → Replication** and enable Realtime for the `captions` table
 4. Copy your **Project URL** and **anon public key** from Settings → API
 
-### 3. Hugging Face Setup
+### 3. Deepgram Setup (Recommended - fastest STT)
 
-1. Go to [huggingface.co](https://huggingface.co) and create an account
-2. Generate an access token at [Settings → Access Tokens](https://huggingface.co/settings/tokens)
-3. Accept the model licenses:
-   - https://huggingface.co/openai/whisper-large-v3-turbo
-   - https://huggingface.co/Helsinki-NLP/opus-mt-en-th
-   - https://huggingface.co/Helsinki-NLP/opus-mt-en-zh
+1. Go to [deepgram.com](https://deepgram.com) and create an account
+2. Create an API key from the Dashboard
+3. This enables **Deepgram Nova-3** streaming STT with ~150ms first-token latency
+4. If no Deepgram key is provided, the app falls back to the browser's Web Speech API
 
-### 4. Vercel Deploy
+### 4. OpenAI Setup
+
+1. Go to [platform.openai.com](https://platform.openai.com) and get an API key
+2. This is used for translation (GPT-4o-mini) and optional batch transcription
+
+### 5. Vercel Deploy
 
 1. Go to [vercel.com](https://vercel.com) and import your GitHub repo
 2. Add Environment Variables in Project Settings:
 
 ```
-HF_TOKEN=hf_xxxxxxxxxxxxxxxx
+DEEPGRAM_API_KEY=your_deepgram_api_key
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_KEY=your_anon_public_key
 ```
@@ -125,25 +131,42 @@ livecaption/
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/session` | POST | Create new session |
-| `/api/transcribe` | POST | Convert audio to English text |
-| `/api/translate` | POST | Translate text to TH/ZH |
+| `/api/config` | GET | Get client-side configuration (STT provider, Supabase keys) |
+| `/api/transcribe` | POST | Convert audio to English text (batch fallback) |
+| `/api/translate` | POST | Translate text to TH/ZH and save to Supabase |
+| `/api/translate-stream` | POST | Stream translation tokens via SSE |
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `HF_TOKEN` | Hugging Face API token |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_KEY` | Supabase anon public key |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `DEEPGRAM_API_KEY` | Deepgram API key for Nova-3 streaming STT | Recommended |
+| `OPENAI_API_KEY` | OpenAI API key for translation & fallback STT | Yes |
+| `SUPABASE_URL` | Supabase project URL | Yes |
+| `SUPABASE_KEY` | Supabase anon public key | Yes |
 
 ---
 
-## Troubleshooting
+## Architecture
 
-### Hugging Face API returns 503
-The HF models may be "warming up" on first request. The app automatically retries once after 5 seconds.
+```
+Browser Mic (16kHz Opus, mono)
+    | WebSocket stream (20ms chunks)
+    v
+Deepgram Nova-3 Streaming (~150ms first token)
+    | Partial + final transcripts
+    v
+[Parallel]
++-- Display partial transcript immediately (optimistic UI)
++-- Send to /api/translate
+        | Parallel translation (Thai + Chinese)
+        v
+    Supabase Realtime --> Audience pages
+```
+
+## Troubleshooting
 
 ### No captions appearing
 - Check that Realtime is enabled in Supabase
@@ -154,6 +177,11 @@ The HF models may be "warming up" on first request. The app automatically retrie
 - Ensure HTTPS is enabled (required for getUserMedia)
 - Check browser permissions
 - Try a different browser
+
+### Deepgram not connecting
+- Verify `DEEPGRAM_API_KEY` is set in environment
+- Check browser console for WebSocket errors
+- The app will automatically fall back to Web Speech API if Deepgram is unavailable
 
 ---
 

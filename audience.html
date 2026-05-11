@@ -222,6 +222,42 @@
             color: #94a3b8;
         }
         
+        .font-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            justify-content: center;
+            padding: 0.5rem 0;
+        }
+        
+        .font-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 0.5rem;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .font-btn:hover {
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+        
+        .font-size-label {
+            font-size: 0.75rem;
+            color: #64748b;
+            min-width: 3rem;
+            text-align: center;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 480px) {
             .caption-text {
@@ -276,6 +312,11 @@
     </main>
     
     <div class="status-bar">
+        <div class="font-controls">
+            <button class="font-btn" onclick="changeFontSize(-0.25)" title="Decrease font size">A-</button>
+            <span class="font-size-label" id="font-size-label">1.75rem</span>
+            <button class="font-btn" onclick="changeFontSize(0.25)" title="Increase font size">A+</button>
+        </div>
         <span class="status-indicator" id="status-indicator"></span>
         <span id="status-text">Connecting...</span>
     </div>
@@ -537,6 +578,29 @@
             document.getElementById('error-message').classList.add('active');
             document.getElementById('caption-placeholder').style.display = 'none';
         }
+        
+        // Font size control
+        let currentFontSize = 1.75;  // rem
+        
+        function changeFontSize(delta) {
+            currentFontSize = Math.max(1, Math.min(4, currentFontSize + delta));
+            document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
+            document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
+            // Persist preference
+            try { localStorage.setItem('lc_font_size', currentFontSize); } catch(e) {}
+        }
+        
+        // Restore saved font size
+        try {
+            const saved = localStorage.getItem('lc_font_size');
+            if (saved) {
+                currentFontSize = parseFloat(saved);
+                document.addEventListener('DOMContentLoaded', () => {
+                    document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
+                    document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
+                });
+            }
+        } catch(e) {}
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {

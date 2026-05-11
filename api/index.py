@@ -1,9 +1,10 @@
 import os
+import json
 import uuid
 import asyncio
 import httpx
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -29,7 +30,9 @@ async def get_config():
     """Return public Supabase configuration for client-side use."""
     return {
         "supabase_url": os.environ.get("SUPABASE_URL", ""),
-        "supabase_key": os.environ.get("SUPABASE_KEY", "")  # Use anon key here
+        "supabase_key": os.environ.get("SUPABASE_KEY", ""),  # Use anon key here
+        "deepgram_api_key": os.environ.get("DEEPGRAM_API_KEY", ""),
+        "stt_provider": "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else "webspeech"
     }
 
 # Environment variables
@@ -37,6 +40,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 
 # API URLs
 OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -151,6 +155,13 @@ class TranslateRequest(BaseModel):
     is_final: bool = False
 
 
+# Streaming translation endpoint
+class StreamTranslateRequest(BaseModel):
+    text: str
+    session_id: str
+    target_lang: str = "th"
+
+
 # Translation helper using OpenAI GPT-4o-mini
 async def translate_with_openai(text: str, target_lang: str) -> str:
     headers = {
@@ -188,6 +199,77 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
         response.raise_for_status()
         result = response.json()
         return result["choices"][0]["message"]["content"].strip()
+
+
+# Streaming translation helper - returns tokens as they arrive
+async def translate_streaming(text: str, target_lang: str):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    lang_names = {"th": "Thai", "zh": "Chinese"}
+    lang_name = lang_names.get(target_lang, target_lang)
+    
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": f"Translate to {lang_name}. Output only the translation."
+            },
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 200,
+        "stream": True
+    }
+    
+    async with httpx.AsyncClient() as client:
+        async with client.stream(
+            "POST",
+            OPENAI_CHAT_URL,
+            headers=headers,
+            json=payload,
+            timeout=15.0
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+
+@app.post("/api/translate-stream")
+async def translate_stream(request: StreamTranslateRequest):
+    """Stream translation tokens for real-time display."""
+    if not OPENAI_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "OPENAI_API_KEY not configured"}
+        )
+    
+    if not request.text.strip():
+        return JSONResponse(content={"translation": ""})
+    
+    async def generate():
+        async for token in translate_streaming(request.text, request.target_lang):
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # Translate endpoint

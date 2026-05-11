@@ -254,6 +254,17 @@
             font-size: 0.875rem;
             margin-top: 0.5rem;
         }
+        
+        .stt-badge {
+            display: inline-block;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 9999px;
+            color: #38bdf8;
+            margin-top: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -263,6 +274,7 @@
             <span class="status-dot"></span>
             <span id="status-text">Waiting</span>
         </div>
+        <span class="stt-badge" id="stt-badge" style="display:none"></span>
     </header>
     
     <main>
@@ -302,7 +314,6 @@
     
     <script>
         let sessionId = null;
-        let recognition = null;
         let isRecording = false;
         let interimDebounce = null;
         let lastSentInterim = '';
@@ -316,6 +327,40 @@
         let watchdogTimer = null;
         let livenessTimer = null;
         let isRestarting = false;
+        
+        // STT provider config (loaded from server)
+        let sttProvider = 'webspeech';  // 'deepgram' or 'webspeech'
+        let deepgramApiKey = '';
+        
+        // Deepgram state
+        let dgSocket = null;
+        let mediaRecorder = null;
+        let mediaStream = null;
+        
+        // Web Speech API state (fallback)
+        let recognition = null;
+        
+        // Load STT config from server
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                if (config.deepgram_api_key) {
+                    deepgramApiKey = config.deepgram_api_key;
+                    sttProvider = 'deepgram';
+                    console.log('STT provider: Deepgram Nova-3');
+                } else {
+                    sttProvider = 'webspeech';
+                    console.log('STT provider: Web Speech API (fallback)');
+                }
+            } catch (e) {
+                console.warn('Failed to load config, using Web Speech API:', e);
+                sttProvider = 'webspeech';
+            }
+        }
+        
+        // Initialize config on page load
+        loadConfig();
         
         async function startSession() {
             const btn = document.getElementById('start-session-btn');
@@ -372,6 +417,162 @@
             }
         }
         
+        // ========================================
+        // Deepgram Nova-3 WebSocket STT
+        // ========================================
+        
+        async function startDeepgram() {
+            try {
+                // Get mic with optimized audio settings
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                // Build Deepgram WebSocket URL with streaming params
+                const dgParams = new URLSearchParams({
+                    model: 'nova-3',
+                    language: 'en',
+                    smart_format: 'true',
+                    interim_results: 'true',
+                    vad_events: 'true',
+                    endpointing: '300',
+                    utterance_end_ms: '1500'
+                });
+                
+                dgSocket = new WebSocket(
+                    `wss://api.deepgram.com/v1/listen?${dgParams}`,
+                    ['token', deepgramApiKey]
+                );
+                
+                dgSocket.onopen = () => {
+                    console.log('Deepgram WebSocket connected');
+                    lastActivityTime = Date.now();
+                    
+                    // Start MediaRecorder with Opus codec, 20ms chunks
+                    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                        ? 'audio/webm;codecs=opus'
+                        : 'audio/webm';
+                    
+                    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+                    
+                    mediaRecorder.ondataavailable = ({ data }) => {
+                        if (dgSocket && dgSocket.readyState === WebSocket.OPEN && data.size > 0) {
+                            dgSocket.send(data);
+                        }
+                    };
+                    
+                    mediaRecorder.start(20);  // 20ms chunks for minimal latency
+                    console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
+                };
+                
+                dgSocket.onmessage = ({ data }) => {
+                    lastActivityTime = Date.now();
+                    const msg = JSON.parse(data);
+                    
+                    // Handle VAD events
+                    if (msg.type === 'SpeechStarted') {
+                        document.getElementById('spinner').classList.remove('active');
+                        return;
+                    }
+                    
+                    // Handle utterance end
+                    if (msg.type === 'UtteranceEnd') {
+                        if (currentInterim && currentInterim.trim()) {
+                            fullTranscript += currentInterim + ' ';
+                            currentInterim = '';
+                            const previewContent = document.getElementById('preview-content');
+                            previewContent.textContent = fullTranscript;
+                            sendToServer(fullTranscript.trim(), true);
+                        }
+                        return;
+                    }
+                    
+                    // Handle transcription results
+                    if (msg.channel && msg.channel.alternatives && msg.channel.alternatives.length > 0) {
+                        const transcript = msg.channel.alternatives[0].transcript;
+                        if (!transcript) return;
+                        
+                        const previewContent = document.getElementById('preview-content');
+                        document.getElementById('spinner').classList.remove('active');
+                        
+                        if (msg.is_final) {
+                            // Final result - commit to transcript
+                            fullTranscript += transcript + ' ';
+                            currentInterim = '';
+                            previewContent.textContent = fullTranscript;
+                            sendToServer(fullTranscript.trim(), true);
+                        } else {
+                            // Interim result - show immediately (optimistic UI)
+                            currentInterim = transcript;
+                            lastInterimTime = Date.now();
+                            const display = fullTranscript + transcript;
+                            previewContent.innerHTML = escapeHtml(fullTranscript) +
+                                '<span style="color:#94a3b8;font-style:italic">' +
+                                escapeHtml(transcript) + '</span>';
+                            sendInterim(display.trim());
+                        }
+                    }
+                };
+                
+                dgSocket.onerror = (err) => {
+                    console.error('Deepgram WebSocket error:', err);
+                };
+                
+                dgSocket.onclose = (event) => {
+                    console.log('Deepgram WebSocket closed:', event.code, event.reason);
+                    if (isRecording && !isRestarting) {
+                        console.log('Reconnecting Deepgram...');
+                        setTimeout(() => {
+                            if (isRecording) startDeepgram();
+                        }, 500);
+                    }
+                };
+                
+            } catch (error) {
+                console.error('Deepgram start failed:', error);
+                throw error;
+            }
+        }
+        
+        function stopDeepgram() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                try { mediaRecorder.stop(); } catch (e) {}
+            }
+            mediaRecorder = null;
+            
+            if (dgSocket) {
+                try {
+                    // Send close frame to Deepgram
+                    if (dgSocket.readyState === WebSocket.OPEN) {
+                        dgSocket.send(JSON.stringify({ type: 'CloseStream' }));
+                    }
+                    dgSocket.close();
+                } catch (e) {}
+                dgSocket = null;
+            }
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(t => t.stop());
+                mediaStream = null;
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // ========================================
+        // Web Speech API (fallback)
+        // ========================================
+        
         function createRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SpeechRecognition();
@@ -406,7 +607,7 @@
                     currentInterim = interimText;
                     lastInterimTime = Date.now();
                     const display = fullTranscript + interimText;
-                    previewContent.innerHTML = fullTranscript + '<span style="color:#94a3b8">' + interimText + '</span>';
+                    previewContent.innerHTML = escapeHtml(fullTranscript) + '<span style="color:#94a3b8;font-style:italic">' + escapeHtml(interimText) + '</span>';
                     sendInterim(display.trim());
                 }
             };
@@ -614,23 +815,35 @@
             preemptiveRestartTimer = null;
         }
         
-        function startRecording() {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                alert('Speech Recognition is not supported in this browser. Please use Chrome or Edge.');
-                return;
-            }
-            
+        // ========================================
+        // Unified start/stop
+        // ========================================
+        
+        async function startRecording() {
             try {
-                isRecording = true;  // Set before creating so onstart works correctly
-                recognition = createRecognition();
-                recognition.start();
-                startWatchdogs();
+                isRecording = true;
+                
+                if (sttProvider === 'deepgram') {
+                    await startDeepgram();
+                } else {
+                    // Web Speech API fallback
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SpeechRecognition) {
+                        alert('Speech Recognition is not supported in this browser. Please use Chrome or Edge.');
+                        isRecording = false;
+                        return;
+                    }
+                    recognition = createRecognition();
+                    recognition.start();
+                    startWatchdogs();
+                }
+                
                 document.getElementById('mic-btn').classList.add('recording');
                 document.getElementById('mic-text').textContent = 'Click to stop';
                 document.getElementById('preview-section').classList.add('active');
                 document.getElementById('spinner').classList.add('active');
+                document.getElementById('stt-badge').textContent = sttProvider === 'deepgram' ? 'Deepgram Nova-3' : 'Web Speech API';
+                document.getElementById('stt-badge').style.display = 'inline-block';
                 updateStatus('live');
             } catch (error) {
                 isRecording = false;
@@ -641,17 +854,21 @@
         function stopRecording() {
             isRecording = false;
             isRestarting = false;
-            stopWatchdogs();
-            stopLivenessCheck();
             
-            if (recognition) {
-                try {
-                    recognition.onend = null;
-                    recognition.onerror = null;
-                    recognition.onresult = null;
-                    recognition.stop();
-                } catch (e) {}
-                recognition = null;
+            if (sttProvider === 'deepgram') {
+                stopDeepgram();
+            } else {
+                stopWatchdogs();
+                stopLivenessCheck();
+                if (recognition) {
+                    try {
+                        recognition.onend = null;
+                        recognition.onerror = null;
+                        recognition.onresult = null;
+                        recognition.stop();
+                    } catch (e) {}
+                    recognition = null;
+                }
             }
             
             if (interimDebounce) {
@@ -664,6 +881,7 @@
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
             document.getElementById('spinner').classList.remove('active');
+            document.getElementById('stt-badge').style.display = 'none';
             updateStatus('waiting');
         }
         
@@ -683,7 +901,7 @@
                         is_final: false
                     })
                 }).catch(err => console.error('Interim send failed:', err));
-            }, 500);  // Update English every 500ms while speaking
+            }, 150);  // 150ms debounce for near-instant interim updates
         }
         
         // Send final text for translation
