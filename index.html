@@ -481,7 +481,7 @@
                 // 5. Send offer to OpenAI Realtime API
                 console.log('📡 Sending offer to OpenAI Realtime API...');
                 const sdpResponse = await fetch(
-                    'https://api.openai.com/v1/realtime?model=gpt-realtime-mini',
+                    'https://api.openai.com/v1/realtime/transcription_sessions?model=gpt-realtime-whisper',
                     {
                         method: 'POST',
                         headers: {
