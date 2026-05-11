@@ -311,8 +311,10 @@
         let currentInterim = '';  // Current interim text (not yet finalized)
         let lastInterimTime = 0;
         let lastActivityTime = 0;
+        let recognitionStartTime = 0;
         let preemptiveRestartTimer = null;
         let watchdogTimer = null;
+        let livenessTimer = null;
         let isRestarting = false;
         
         async function startSession() {
@@ -411,8 +413,11 @@
             
             rec.onstart = () => {
                 lastActivityTime = Date.now();
+                recognitionStartTime = Date.now();
                 isRestarting = false;
                 console.log('Recognition started');
+                // Start liveness check
+                startLivenessCheck();
             };
             
             rec.onerror = (event) => {
@@ -507,6 +512,78 @@
             safeRestart();
         }
         
+        // Liveness check: detect if recognition started but isn't emitting events
+        function startLivenessCheck() {
+            stopLivenessCheck();
+            livenessTimer = setInterval(() => {
+                if (!isRecording || !recognition) return;
+                
+                const timeSinceStart = Date.now() - recognitionStartTime;
+                const timeSinceActivity = Date.now() - lastActivityTime;
+                
+                // If started > 3s ago but no activity for > 4s, it's likely dead
+                if (timeSinceStart > 3000 && timeSinceActivity > 4000 && !isRestarting) {
+                    console.warn('Liveness: recognition appears dead, hard resetting...');
+                    hardResetRecognition();
+                }
+            }, 2000);
+        }
+        
+        function stopLivenessCheck() {
+            if (livenessTimer) clearInterval(livenessTimer);
+            livenessTimer = null;
+        }
+        
+        // Nuclear option: completely destroy and recreate everything
+        function hardResetRecognition() {
+            if (!isRecording || isRestarting) return;
+            isRestarting = true;
+            
+            console.log('HARD RESET: destroying recognition instance');
+            
+            // Preserve any interim text
+            if (currentInterim && currentInterim.trim()) {
+                fullTranscript += currentInterim;
+                if (!fullTranscript.endsWith(' ')) fullTranscript += ' ';
+                currentInterim = '';
+            }
+            
+            // Kill the instance completely
+            if (recognition) {
+                try { recognition.abort(); } catch (e) {}
+                try { recognition.stop(); } catch (e) {}
+                recognition = null;
+            }
+            
+            // Wait longer for Chrome to clean up
+            setTimeout(() => {
+                if (!isRecording) {
+                    isRestarting = false;
+                    return;
+                }
+                
+                try {
+                    recognition = createRecognition();
+                    recognition.start();
+                    console.log('HARD RESET: recognition restarted');
+                } catch (e) {
+                    console.error('Hard reset failed:', e);
+                    isRestarting = false;
+                    // Try one more time
+                    setTimeout(() => {
+                        if (isRecording && !recognition) {
+                            try {
+                                recognition = createRecognition();
+                                recognition.start();
+                            } catch (err) {
+                                console.error('Final hard reset attempt failed');
+                            }
+                        }
+                    }, 1000);
+                }
+            }, 500);
+        }
+        
         // Watchdog: detect if recognition has been silent too long (Chrome bug)
         function startWatchdogs() {
             stopWatchdogs();
@@ -532,6 +609,7 @@
         function stopWatchdogs() {
             if (watchdogTimer) clearInterval(watchdogTimer);
             if (preemptiveRestartTimer) clearInterval(preemptiveRestartTimer);
+            stopLivenessCheck();
             watchdogTimer = null;
             preemptiveRestartTimer = null;
         }
@@ -564,6 +642,7 @@
             isRecording = false;
             isRestarting = false;
             stopWatchdogs();
+            stopLivenessCheck();
             
             if (recognition) {
                 try {
