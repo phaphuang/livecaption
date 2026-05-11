@@ -142,6 +142,11 @@
             font-weight: 600;
         }
         
+        .caption-text .interim {
+            color: #64748b;
+            font-style: italic;
+        }
+        
         .caption-placeholder {
             font-size: 1.125rem;
             color: #64748b;
@@ -351,6 +356,9 @@
             
             // Clear history when switching languages to avoid mixing
             captionHistory = [];
+            lastEnText = '';
+            lastTranslatedText = '';
+            isCurrentInterim = false;
             
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -443,7 +451,7 @@
                 }
                 
                 if (data && data[currentLang]) {
-                    displayCaption(data[currentLang]);
+                    updateCurrentLine(data[currentLang]);
                 }
                 
             } catch (error) {
@@ -451,49 +459,76 @@
             }
         }
         
+        let lastEnText = '';
+        let lastTranslatedText = '';
+        
         function handleCaptionUpdate(data) {
             if (!data) return;
             
-            const text = data[currentLang];
-            if (text && text.trim()) {
-                displayCaption(text);
+            const enText = data['en'] || '';
+            const langText = data[currentLang] || '';
+            
+            // If viewing English, show English immediately
+            if (currentLang === 'en') {
+                if (enText && enText.trim() && enText !== lastEnText) {
+                    lastEnText = enText;
+                    updateCurrentLine(enText);
+                }
+                return;
+            }
+            
+            // For other languages: show translation if available, else show English as placeholder
+            if (langText && langText.trim() && langText !== lastTranslatedText) {
+                lastTranslatedText = langText;
+                updateCurrentLine(langText);
+            } else if (enText && enText.trim() && enText !== lastEnText) {
+                lastEnText = enText;
+                updateCurrentLine(enText, true);  // Show as interim placeholder
             }
         }
         
         // Caption history for teleprompter-style display
         let captionHistory = [];
-        const MAX_HISTORY_LINES = 3;
+        const MAX_HISTORY_LINES = 4;
+        let isCurrentInterim = false;
         
-        function displayCaption(text) {
+        function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
             const captionText = document.getElementById('caption-text');
             
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            // Add new text to history
-            captionHistory.push(text);
+            // If last line was interim, replace it instead of adding new
+            if (isCurrentInterim && captionHistory.length > 0) {
+                captionHistory[captionHistory.length - 1] = text;
+            } else if (!isInterim && isCurrentInterim && captionHistory.length > 0) {
+                // Finalize: replace interim with final translation
+                captionHistory[captionHistory.length - 1] = text;
+            } else {
+                captionHistory.push(text);
+            }
+            isCurrentInterim = isInterim;
             
             // Keep only last N lines
-            if (captionHistory.length > MAX_HISTORY_LINES) {
+            while (captionHistory.length > MAX_HISTORY_LINES) {
                 captionHistory.shift();
             }
             
-            // Build HTML with lines - last line is "current"
+            // Build HTML
             let html = '';
             captionHistory.forEach((line, index) => {
                 const isCurrent = index === captionHistory.length - 1;
-                const className = isCurrent ? 'line current' : 'line';
+                let className = 'line';
+                if (isCurrent && isInterim) {
+                    className = 'line interim';
+                } else if (isCurrent) {
+                    className = 'line current';
+                }
                 html += `<span class="${className}">${escapeHtml(line)}</span>`;
             });
             
             captionText.innerHTML = html;
-            
-            // Auto-scroll to bottom
-            const wrapper = document.getElementById('caption-wrapper');
-            if (wrapper) {
-                wrapper.scrollTop = wrapper.scrollHeight;
-            }
         }
         
         function escapeHtml(text) {

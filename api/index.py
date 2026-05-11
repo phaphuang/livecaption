@@ -148,9 +148,10 @@ async def transcribe(audio: UploadFile = File(...)):
 class TranslateRequest(BaseModel):
     text: str
     session_id: str
+    is_final: bool = False
 
 
-# Translation helper using OpenAI GPT-4
+# Translation helper using OpenAI GPT-4o-mini
 async def translate_with_openai(text: str, target_lang: str) -> str:
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -192,13 +193,7 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
 # Translate endpoint
 @app.post("/api/translate")
 async def translate(request: TranslateRequest):
-    """Translate English text to Thai and Chinese, store in Supabase."""
-    if not OPENAI_API_KEY:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "OPENAI_API_KEY not configured"}
-        )
-    
+    """Save English immediately, then translate and update."""
     supabase = get_supabase()
     if not supabase:
         return JSONResponse(
@@ -210,13 +205,25 @@ async def translate(request: TranslateRequest):
         en_text = request.text.strip()
         session_id = request.session_id
         
-        # Translate in parallel using OpenAI
+        # Step 1: Save English to Supabase IMMEDIATELY
+        # English audience sees text with near-zero delay
+        supabase.table("captions").upsert({
+            "session_id": session_id,
+            "en": en_text,
+            "updated_at": "now()"
+        }).execute()
+        
+        # Step 2: Only translate on final results to avoid wasting API calls
+        if not request.is_final or not OPENAI_API_KEY:
+            return {"en": en_text, "th": "", "zh": ""}
+        
+        # Step 3: Translate in parallel
         th_task = translate_with_openai(en_text, "th")
         zh_task = translate_with_openai(en_text, "zh")
         
         th_text, zh_text = await asyncio.gather(th_task, zh_task)
         
-        # Upsert to Supabase
+        # Step 4: Update Supabase with translations
         supabase.table("captions").upsert({
             "session_id": session_id,
             "en": en_text,
