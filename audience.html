@@ -129,14 +129,10 @@
             overflow-wrap: break-word;
             font-weight: 500;
             padding: 0;
+            transition: color 0.2s ease;
         }
         
-        .caption-segment {
-            color: #f8fafc;
-            margin-bottom: 0.5rem;
-        }
-        
-        .caption-segment.interim {
+        .caption-text.interim {
             color: #94a3b8;
             font-style: italic;
         }
@@ -393,7 +389,6 @@
             lastEnText = '';
             lastTranslatedText = '';
             lastDisplayedText = '';
-            renderedSegmentCount = 0;
             
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -536,23 +531,13 @@
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            // Split into segments and keep only last 2 (like presenter preview)
-            const segments = text.split('\n').filter(s => s.trim());
-            const lastTwo = segments.slice(-2);  // Keep only last 2 segments
-            
-            // Build HTML: previous segment (if exists) + current segment
-            let html = '';
-            if (lastTwo.length === 2) {
-                // Show previous segment as locked
-                html += '<div class="caption-segment">' + escapeHtml(lastTwo[0]) + '</div>';
-                // Current segment gets interim styling if needed
-                html += '<div class="caption-segment' + (isInterim ? ' interim' : '') + '">' + escapeHtml(lastTwo[1]) + '</div>';
+            // Show as continuous flowing text
+            if (isInterim) {
+                captionText.className = 'caption-text interim';
             } else {
-                // Only current segment
-                html += '<div class="caption-segment' + (isInterim ? ' interim' : '') + '">' + escapeHtml(lastTwo[0] || '') + '</div>';
+                captionText.className = 'caption-text';
             }
-            
-            captionText.innerHTML = html;
+            captionText.textContent = text;
             
             // Auto-scroll to bottom
             const wrapper = captionText.parentElement;

@@ -318,10 +318,8 @@
         let interimDebounce = null;
         let lastSentInterim = '';
         let lastSentFinal = '';
-        let segments = [];        // Locked segments (never change)
-        let fullTranscript = '';  // Current segment's finalized text
+        let fullTranscript = '';  // Accumulated finalized text
         let currentInterim = '';  // Current interim text (not yet finalized)
-        let segmentTimer = null;  // 10s segment commit timer
         let lastInterimTime = 0;
         let lastActivityTime = 0;
         let recognitionStartTime = 0;
@@ -514,14 +512,15 @@
                             fullTranscript += transcript + ' ';
                             currentInterim = '';
                             previewContent.textContent = fullTranscript;
-                            sendToServer(getFullText(), true);
+                            sendToServer(fullTranscript.trim(), true);
                         } else {
                             currentInterim = transcript;
                             lastInterimTime = Date.now();
+                            const display = fullTranscript + transcript;
                             previewContent.innerHTML = escapeHtml(fullTranscript) +
                                 '<span style="color:#94a3b8;font-style:italic">' +
                                 escapeHtml(transcript) + '</span>';
-                            sendInterim();
+                            sendInterim(display.trim());
                         }
                     }
                 };
@@ -624,14 +623,15 @@
                 
                 if (newFinal) {
                     fullTranscript += newFinal;
-                    currentInterim = '';
+                    currentInterim = '';  // Cleared - it became final
                     previewContent.textContent = fullTranscript;
-                    sendToServer(getFullText(), true);
+                    sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
                     currentInterim = interimText;
                     lastInterimTime = Date.now();
+                    const display = fullTranscript + interimText;
                     previewContent.innerHTML = escapeHtml(fullTranscript) + '<span style="color:#94a3b8;font-style:italic">' + escapeHtml(interimText) + '</span>';
-                    sendInterim();
+                    sendInterim(display.trim());
                 }
             };
             
@@ -848,11 +848,9 @@
                 isRestarting = false;
                 
                 // Reset transcript state fresh every session
-                segments = [];
                 fullTranscript = '';
                 currentInterim = '';
                 lastSentInterim = '';
-                lastSentFinal = '';
                 if (interimDebounce) {
                     clearTimeout(interimDebounce);
                     interimDebounce = null;
@@ -861,25 +859,6 @@
                 // Clear preview
                 const previewContent = document.getElementById('preview-content');
                 if (previewContent) previewContent.textContent = '';
-                
-                // Start segment timer: every 10s, lock current text as a segment
-                if (segmentTimer) clearInterval(segmentTimer);
-                segmentTimer = setInterval(() => {
-                    if (fullTranscript.trim()) {
-                        // Commit any pending interim first
-                        if (currentInterim && currentInterim.trim()) {
-                            fullTranscript += currentInterim + ' ';
-                            currentInterim = '';
-                        }
-                        // Capture text, push to segments, THEN reset before sending
-                        const segmentText = fullTranscript.trim();
-                        segments.push(segmentText);
-                        fullTranscript = '';  // Reset BEFORE getFullText
-                        currentInterim = '';
-                        sendToServer(getFullText(), true);
-                        console.log('Segment committed, total segments:', segments.length);
-                    }
-                }, 10000);
                 
                 if (sttProvider === 'deepgram') {
                     await startDeepgram();
@@ -933,13 +912,8 @@
                 clearTimeout(interimDebounce);
             }
             
-            segments = [];
             fullTranscript = '';
             currentInterim = '';
-            if (segmentTimer) {
-                clearInterval(segmentTimer);
-                segmentTimer = null;
-            }
             
             document.getElementById('mic-btn').classList.remove('recording');
             document.getElementById('mic-text').textContent = 'Click to start';
@@ -948,19 +922,10 @@
             updateStatus('waiting');
         }
         
-        // Build full text from segments + current
-        function getFullText() {
-            const parts = [...segments];
-            const current = (fullTranscript + currentInterim).trim();
-            if (current) parts.push(current);
-            return parts.join('\n');
-        }
-        
         // Send interim text to server (debounced, English-only update)
-        function sendInterim() {
-            const full = getFullText();
-            if (!sessionId || !full || full === lastSentInterim) return;
-            lastSentInterim = full;
+        function sendInterim(text) {
+            if (!sessionId || !text || text === lastSentInterim) return;
+            lastSentInterim = text;
             
             if (interimDebounce) clearTimeout(interimDebounce);
             interimDebounce = setTimeout(() => {
@@ -968,12 +933,12 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        text: full,
+                        text: text,
                         session_id: sessionId,
                         is_final: false
                     })
                 }).catch(err => console.error('Interim send failed:', err));
-            }, 150);
+            }, 150);  // 150ms debounce for near-instant interim updates
         }
         
         // Send final text for translation
