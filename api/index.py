@@ -3,9 +3,8 @@ import json
 import uuid
 import asyncio
 import httpx
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from supabase import create_client, Client
 
@@ -37,13 +36,11 @@ async def get_config():
 
 # Environment variables
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 
 # API URLs
-OPENAI_API_URL = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # Lazy-loaded Supabase client (initialized at runtime)
@@ -89,62 +86,6 @@ async def create_session():
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to create session: {str(e)}"}
-        )
-
-
-# Transcription helper using OpenAI gpt-4o-transcribe
-async def transcribe_with_openai(audio_bytes: bytes) -> dict:
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    
-    # OpenAI expects multipart/form-data
-    files = {
-        "file": ("audio.webm", audio_bytes, "audio/webm"),
-        "model": (None, "gpt-4o-transcribe"),
-        "language": (None, "en"),
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            OPENAI_API_URL,
-            headers=headers,
-            files=files,
-            timeout=15.0
-        )
-        
-        response.raise_for_status()
-        return response.json()
-
-
-# Transcribe endpoint
-@app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    """Receive audio blob and return English transcription."""
-    if not OPENAI_API_KEY:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "OPENAI_API_KEY not configured"}
-        )
-    
-    try:
-        audio_bytes = await audio.read()
-        result = await transcribe_with_openai(audio_bytes)
-        
-        # OpenAI returns { "text": "transcribed text" }
-        text = result.get("text", "")
-        
-        return {"text": text.strip()}
-    
-    except httpx.HTTPStatusError as e:
-        return JSONResponse(
-            status_code=502,
-            content={"error": f"Transcription service error: {str(e)}"}
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Transcription failed: {str(e)}"}
         )
 
 
