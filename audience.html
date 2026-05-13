@@ -131,11 +131,12 @@
             padding: 0;
         }
         
-        .caption-text .final {
+        .caption-segment {
             color: #f8fafc;
+            margin-bottom: 0.5rem;
         }
         
-        .caption-text .interim {
+        .caption-segment.interim {
             color: #94a3b8;
             font-style: italic;
         }
@@ -392,6 +393,7 @@
             lastEnText = '';
             lastTranslatedText = '';
             lastDisplayedText = '';
+            renderedSegmentCount = 0;
             
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -522,7 +524,7 @@
         }
         
         let lastDisplayedText = '';
-        let lastFinalText = '';
+        let renderedSegmentCount = 0;  // How many locked segments we've rendered
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
@@ -535,14 +537,30 @@
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            if (isInterim) {
-                // For interim: keep previous final text stable, append interim at end
-                captionText.innerHTML = '<span class="final">' + escapeHtml(lastFinalText) + '</span>' +
-                    '<span class="interim">' + escapeHtml(text.slice(lastFinalText.length)) + '</span>';
+            // Split into segments (presenter sends newline-separated chunks)
+            const segments = text.split('\n').filter(s => s.trim());
+            const lockedSegments = segments.slice(0, -1);  // All but last are locked
+            const currentSegment = segments[segments.length - 1] || '';
+            
+            // Only rebuild locked segments if count changed (they never change content)
+            if (lockedSegments.length !== renderedSegmentCount) {
+                // Rebuild: locked segments + current
+                let html = '';
+                for (const seg of lockedSegments) {
+                    html += '<div class="caption-segment">' + escapeHtml(seg) + '</div>';
+                }
+                html += '<div class="caption-segment' + (isInterim ? ' interim' : '') + '" id="current-segment">' + escapeHtml(currentSegment) + '</div>';
+                captionText.innerHTML = html;
+                renderedSegmentCount = lockedSegments.length;
             } else {
-                // Final text: update the stable portion
-                lastFinalText = text;
-                captionText.innerHTML = '<span class="final">' + escapeHtml(text) + '</span>';
+                // Only update the current (last) segment — locked ones stay untouched
+                let currentEl = document.getElementById('current-segment');
+                if (!currentEl) {
+                    captionText.innerHTML += '<div class="caption-segment" id="current-segment"></div>';
+                    currentEl = document.getElementById('current-segment');
+                }
+                currentEl.className = 'caption-segment' + (isInterim ? ' interim' : '');
+                currentEl.textContent = currentSegment;
             }
             
             // Auto-scroll to bottom
