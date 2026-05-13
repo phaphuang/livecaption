@@ -423,6 +423,20 @@
         
         async function startDeepgram() {
             try {
+                // Clean up any previous connection first
+                if (dgSocket) {
+                    try { dgSocket.onclose = null; dgSocket.onerror = null; dgSocket.close(); } catch(e) {}
+                    dgSocket = null;
+                }
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    try { mediaRecorder.stop(); } catch(e) {}
+                    mediaRecorder = null;
+                }
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(t => t.stop());
+                    mediaStream = null;
+                }
+                
                 // Get mic with optimized audio settings
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
@@ -831,6 +845,20 @@
         async function startRecording() {
             try {
                 isRecording = true;
+                isRestarting = false;
+                
+                // Reset transcript state fresh every session
+                fullTranscript = '';
+                currentInterim = '';
+                lastSentInterim = '';
+                if (interimDebounce) {
+                    clearTimeout(interimDebounce);
+                    interimDebounce = null;
+                }
+                
+                // Clear preview
+                const previewContent = document.getElementById('preview-content');
+                if (previewContent) previewContent.textContent = '';
                 
                 if (sttProvider === 'deepgram') {
                     await startDeepgram();
