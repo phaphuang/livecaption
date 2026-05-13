@@ -110,30 +110,40 @@
         }
         
         .caption-wrapper {
-            min-height: 200px;
-            max-height: 400px;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
             width: 100%;
-            overflow-y: auto;
-            position: relative;
+            gap: 0.4rem;
         }
         
-        .caption-text {
+        .caption-line {
             font-size: 1.75rem;
-            line-height: 1.6;
+            line-height: 1.5;
             text-align: left;
-            color: #f8fafc;
             word-wrap: break-word;
             overflow-wrap: break-word;
             font-weight: 500;
-            padding: 0;
-            transition: color 0.2s ease;
+            transition: opacity 0.3s ease, color 0.2s ease;
         }
         
-        .caption-text.interim {
+        .caption-line.old-2 {
+            opacity: 0.25;
             color: #94a3b8;
+        }
+        
+        .caption-line.old-1 {
+            opacity: 0.55;
+            color: #cbd5e1;
+        }
+        
+        .caption-line.current {
+            opacity: 1;
+            color: #f8fafc;
+        }
+        
+        .caption-line .interim-text {
+            color: #64748b;
             font-style: italic;
         }
         
@@ -306,7 +316,9 @@
                     <div class="spinner"></div>
                     <div>Waiting for captions...</div>
                 </div>
-                <div class="caption-text" id="caption-text" style="display: none;"></div>
+                <div class="caption-line old-2" id="caption-line-0" style="display:none"></div>
+                <div class="caption-line old-1" id="caption-line-1" style="display:none"></div>
+                <div class="caption-line current" id="caption-line-2" style="display:none"></div>
             </div>
         </div>
     </main>
@@ -518,32 +530,61 @@
             }
         }
         
-        let lastDisplayedText = '';
+        // 3-line rolling caption display
+        // lines[0] = oldest (dimmest), lines[1] = middle, lines[2] = current (active)
+        let captionLines = ['', '', ''];  // committed final text per line
+        let captionInterim = '';          // in-progress interim for current line
+        let lastFinalText = '';           // track last committed final to detect new sentences
+        
+        function renderLines() {
+            const placeholder = document.getElementById('caption-placeholder');
+            placeholder.style.display = 'none';
+            
+            for (let i = 0; i < 3; i++) {
+                const el = document.getElementById('caption-line-' + i);
+                const committed = captionLines[i];
+                const isActive = i === 2;
+                
+                if (!committed && !(isActive && captionInterim)) {
+                    el.style.display = 'none';
+                    continue;
+                }
+                
+                el.style.display = 'block';
+                
+                if (isActive && captionInterim) {
+                    // Current line: committed text + dimmed interim
+                    el.innerHTML = escapeHtml(committed) +
+                        '<span class="interim-text">' + escapeHtml(captionInterim) + '</span>';
+                } else {
+                    el.textContent = committed;
+                }
+            }
+        }
+        
+        function pushFinalLine(text) {
+            // Scroll lines up: [0]=old [1]=mid [2]=current becomes [0]=mid [1]=current [2]=new
+            captionLines[0] = captionLines[1];
+            captionLines[1] = captionLines[2];
+            captionLines[2] = text;
+            captionInterim = '';
+        }
         
         function updateCurrentLine(text, isInterim = false) {
-            const placeholder = document.getElementById('caption-placeholder');
-            const captionText = document.getElementById('caption-text');
-            
             if (!text || !text.trim()) return;
-            if (text === lastDisplayedText) return;
-            lastDisplayedText = text;
             
-            placeholder.style.display = 'none';
-            captionText.style.display = 'block';
-            
-            // Show as continuous flowing text
             if (isInterim) {
-                captionText.className = 'caption-text interim';
+                captionInterim = text;
             } else {
-                captionText.className = 'caption-text';
+                // Final text — if it differs from last final, push as a new line
+                if (text !== lastFinalText) {
+                    lastFinalText = text;
+                    pushFinalLine(text);
+                }
+                captionInterim = '';
             }
-            captionText.textContent = text;
             
-            // Auto-scroll to bottom
-            const wrapper = captionText.parentElement;
-            if (wrapper) {
-                wrapper.scrollTop = wrapper.scrollHeight;
-            }
+            renderLines();
         }
         
         function escapeHtml(text) {
@@ -585,7 +626,7 @@
         
         function changeFontSize(delta) {
             currentFontSize = Math.max(1, Math.min(4, currentFontSize + delta));
-            document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
+            document.querySelectorAll('.caption-line').forEach(el => el.style.fontSize = currentFontSize + 'rem');
             document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
             // Persist preference
             try { localStorage.setItem('lc_font_size', currentFontSize); } catch(e) {}
@@ -597,7 +638,7 @@
             if (saved) {
                 currentFontSize = parseFloat(saved);
                 document.addEventListener('DOMContentLoaded', () => {
-                    document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
+                    document.querySelectorAll('.caption-line').forEach(el => el.style.fontSize = currentFontSize + 'rem');
                     document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
                 });
             }
