@@ -137,11 +137,6 @@
             font-style: italic;
         }
         
-        .interim-words {
-            color: #64748b;
-            font-style: italic;
-        }
-        
         .caption-placeholder {
             font-size: 1.125rem;
             color: #64748b;
@@ -496,7 +491,6 @@
         
         let lastEnText = '';
         let lastTranslatedText = '';
-        let lastFinalEnText = '';  // English that has a confirmed translation
         
         function handleCaptionUpdate(data) {
             if (!data) return;
@@ -504,29 +498,23 @@
             const enText = data['en'] || '';
             const langText = data[currentLang] || '';
             
+            // If viewing English, show English immediately
             if (currentLang === 'en') {
-                if (!enText.trim()) return;
-                // Detect if this is a fresh interim (th/zh still empty) or final
-                const isFinalUpdate = !!(data['th'] || data['zh']);
-                if (enText !== lastEnText) {
+                if (enText && enText.trim() && enText !== lastEnText) {
                     lastEnText = enText;
-                    updateCurrentLine(enText, !isFinalUpdate);
+                    updateCurrentLine(enText);
                 }
                 return;
             }
             
-            // For Thai/Chinese:
-            // - If translation arrived, show it as final
-            // - If only English updated (no translation yet), show last translation
-            //   + dim the new English words at the end as a 'translating' hint
+            // For other languages: only show translated text, never flash English
             if (langText && langText.trim() && langText !== lastTranslatedText) {
                 lastTranslatedText = langText;
-                lastFinalEnText = enText;
-                updateCurrentLine(langText, false);
-            } else if (enText && enText.trim() && enText !== lastEnText) {
+                updateCurrentLine(langText);
+            }
+            // Track English changes but don't display them
+            if (enText && enText.trim()) {
                 lastEnText = enText;
-                // Show last known translation as committed + new English words dimmed
-                updateCurrentLineSplit(lastTranslatedText, enText);
             }
         }
         
@@ -537,50 +525,25 @@
             const captionText = document.getElementById('caption-text');
             
             if (!text || !text.trim()) return;
+            if (text === lastDisplayedText) return;
             lastDisplayedText = text;
             
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
+            // Show as continuous flowing text
             if (isInterim) {
-                // Split into committed (normal) + last few words (dim italic)
-                const words = text.trim().split(' ');
-                const splitAt = Math.max(0, words.length - 4);
-                const committed = words.slice(0, splitAt).join(' ');
-                const incoming = words.slice(splitAt).join(' ');
-                captionText.innerHTML = (committed ? escapeHtml(committed) + ' ' : '') +
-                    '<span class="interim-words">' + escapeHtml(incoming) + '</span>';
+                captionText.className = 'caption-text interim';
             } else {
                 captionText.className = 'caption-text';
-                captionText.textContent = text;
             }
+            captionText.textContent = text;
             
+            // Auto-scroll to bottom
             const wrapper = captionText.parentElement;
-            if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
-        }
-        
-        // Show confirmed translation + dim incoming English hint
-        function updateCurrentLineSplit(translatedText, incomingEn) {
-            const placeholder = document.getElementById('caption-placeholder');
-            const captionText = document.getElementById('caption-text');
-            
-            placeholder.style.display = 'none';
-            captionText.style.display = 'block';
-            captionText.className = 'caption-text';
-            
-            if (translatedText && translatedText.trim()) {
-                // Show last translation + dim English words as incoming hint
-                const enWords = incomingEn.trim().split(' ');
-                const hint = enWords.slice(-5).join(' ');  // last 5 words only
-                captionText.innerHTML = escapeHtml(translatedText) +
-                    ' <span class="interim-words">' + escapeHtml(hint) + '</span>';
-            } else {
-                // No translation yet — show English words fully dimmed
-                captionText.innerHTML = '<span class="interim-words">' + escapeHtml(incomingEn) + '</span>';
+            if (wrapper) {
+                wrapper.scrollTop = wrapper.scrollHeight;
             }
-            
-            const wrapper = captionText.parentElement;
-            if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
         }
         
         function escapeHtml(text) {
