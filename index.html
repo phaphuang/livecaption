@@ -871,10 +871,12 @@
                             fullTranscript += currentInterim + ' ';
                             currentInterim = '';
                         }
-                        segments.push(fullTranscript.trim());
-                        sendToServer(getFullText(), true);
-                        fullTranscript = '';
+                        // Capture text, push to segments, THEN reset before sending
+                        const segmentText = fullTranscript.trim();
+                        segments.push(segmentText);
+                        fullTranscript = '';  // Reset BEFORE getFullText
                         currentInterim = '';
+                        sendToServer(getFullText(), true);
                         console.log('Segment committed, total segments:', segments.length);
                     }
                 }, 10000);
