@@ -110,39 +110,34 @@
         }
         
         .caption-wrapper {
+            min-height: 200px;
+            max-height: 400px;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
             width: 100%;
-            gap: 0.4rem;
+            overflow-y: auto;
+            position: relative;
         }
         
-        .caption-line {
+        .caption-text {
             font-size: 1.75rem;
-            line-height: 1.5;
+            line-height: 1.6;
             text-align: left;
+            color: #f8fafc;
             word-wrap: break-word;
             overflow-wrap: break-word;
             font-weight: 500;
-            transition: opacity 0.3s ease, color 0.2s ease;
+            padding: 0;
+            transition: color 0.2s ease;
         }
         
-        .caption-line.old-2 {
-            opacity: 0.25;
+        .caption-text.interim {
             color: #94a3b8;
+            font-style: italic;
         }
         
-        .caption-line.old-1 {
-            opacity: 0.55;
-            color: #cbd5e1;
-        }
-        
-        .caption-line.current {
-            opacity: 1;
-            color: #f8fafc;
-        }
-        
-        .caption-line .interim-text {
+        .interim-words {
             color: #64748b;
             font-style: italic;
         }
@@ -316,9 +311,7 @@
                     <div class="spinner"></div>
                     <div>Waiting for captions...</div>
                 </div>
-                <div class="caption-line old-2" id="caption-line-0" style="display:none"></div>
-                <div class="caption-line old-1" id="caption-line-1" style="display:none"></div>
-                <div class="caption-line current" id="caption-line-2" style="display:none"></div>
+                <div class="caption-text" id="caption-text" style="display: none;"></div>
             </div>
         </div>
     </main>
@@ -503,6 +496,7 @@
         
         let lastEnText = '';
         let lastTranslatedText = '';
+        let lastFinalEnText = '';  // English that has a confirmed translation
         
         function handleCaptionUpdate(data) {
             if (!data) return;
@@ -510,81 +504,83 @@
             const enText = data['en'] || '';
             const langText = data[currentLang] || '';
             
-            // If viewing English, show English immediately
             if (currentLang === 'en') {
-                if (enText && enText.trim() && enText !== lastEnText) {
+                if (!enText.trim()) return;
+                // Detect if this is a fresh interim (th/zh still empty) or final
+                const isFinalUpdate = !!(data['th'] || data['zh']);
+                if (enText !== lastEnText) {
                     lastEnText = enText;
-                    updateCurrentLine(enText);
+                    updateCurrentLine(enText, !isFinalUpdate);
                 }
                 return;
             }
             
-            // For other languages: only show translated text, never flash English
+            // For Thai/Chinese:
+            // - If translation arrived, show it as final
+            // - If only English updated (no translation yet), show last translation
+            //   + dim the new English words at the end as a 'translating' hint
             if (langText && langText.trim() && langText !== lastTranslatedText) {
                 lastTranslatedText = langText;
-                updateCurrentLine(langText);
-            }
-            // Track English changes but don't display them
-            if (enText && enText.trim()) {
+                lastFinalEnText = enText;
+                updateCurrentLine(langText, false);
+            } else if (enText && enText.trim() && enText !== lastEnText) {
                 lastEnText = enText;
+                // Show last known translation as committed + new English words dimmed
+                updateCurrentLineSplit(lastTranslatedText, enText);
             }
         }
         
-        // 3-line rolling caption display
-        // lines[0] = oldest (dimmest), lines[1] = middle, lines[2] = current (active)
-        let captionLines = ['', '', ''];  // committed final text per line
-        let captionInterim = '';          // in-progress interim for current line
-        let lastFinalText = '';           // track last committed final to detect new sentences
-        
-        function renderLines() {
-            const placeholder = document.getElementById('caption-placeholder');
-            placeholder.style.display = 'none';
-            
-            for (let i = 0; i < 3; i++) {
-                const el = document.getElementById('caption-line-' + i);
-                const committed = captionLines[i];
-                const isActive = i === 2;
-                
-                if (!committed && !(isActive && captionInterim)) {
-                    el.style.display = 'none';
-                    continue;
-                }
-                
-                el.style.display = 'block';
-                
-                if (isActive && captionInterim) {
-                    // Current line: committed text + dimmed interim
-                    el.innerHTML = escapeHtml(committed) +
-                        '<span class="interim-text">' + escapeHtml(captionInterim) + '</span>';
-                } else {
-                    el.textContent = committed;
-                }
-            }
-        }
-        
-        function pushFinalLine(text) {
-            // Scroll lines up: [0]=old [1]=mid [2]=current becomes [0]=mid [1]=current [2]=new
-            captionLines[0] = captionLines[1];
-            captionLines[1] = captionLines[2];
-            captionLines[2] = text;
-            captionInterim = '';
-        }
+        let lastDisplayedText = '';
         
         function updateCurrentLine(text, isInterim = false) {
+            const placeholder = document.getElementById('caption-placeholder');
+            const captionText = document.getElementById('caption-text');
+            
             if (!text || !text.trim()) return;
+            lastDisplayedText = text;
+            
+            placeholder.style.display = 'none';
+            captionText.style.display = 'block';
             
             if (isInterim) {
-                captionInterim = text;
+                // Split into committed (normal) + last few words (dim italic)
+                const words = text.trim().split(' ');
+                const splitAt = Math.max(0, words.length - 4);
+                const committed = words.slice(0, splitAt).join(' ');
+                const incoming = words.slice(splitAt).join(' ');
+                captionText.innerHTML = (committed ? escapeHtml(committed) + ' ' : '') +
+                    '<span class="interim-words">' + escapeHtml(incoming) + '</span>';
             } else {
-                // Final text — if it differs from last final, push as a new line
-                if (text !== lastFinalText) {
-                    lastFinalText = text;
-                    pushFinalLine(text);
-                }
-                captionInterim = '';
+                captionText.className = 'caption-text';
+                captionText.textContent = text;
             }
             
-            renderLines();
+            const wrapper = captionText.parentElement;
+            if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+        }
+        
+        // Show confirmed translation + dim incoming English hint
+        function updateCurrentLineSplit(translatedText, incomingEn) {
+            const placeholder = document.getElementById('caption-placeholder');
+            const captionText = document.getElementById('caption-text');
+            
+            placeholder.style.display = 'none';
+            captionText.style.display = 'block';
+            captionText.className = 'caption-text';
+            
+            if (translatedText && translatedText.trim()) {
+                // Show last translation + dim English words as incoming hint
+                const enWords = incomingEn.trim().split(' ');
+                const hint = enWords.slice(-5).join(' ');  // last 5 words only
+                captionText.innerHTML = escapeHtml(translatedText) +
+                    ' <span class="interim-words">' + escapeHtml(hint) + '</span>';
+            } else {
+                // No translation yet — show English words fully dimmed
+                captionText.innerHTML = '<span class="interim-words">' + escapeHtml(incomingEn) + '</span>';
+            }
+            
+            const wrapper = captionText.parentElement;
+            if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
         }
         
         function escapeHtml(text) {
@@ -626,7 +622,7 @@
         
         function changeFontSize(delta) {
             currentFontSize = Math.max(1, Math.min(4, currentFontSize + delta));
-            document.querySelectorAll('.caption-line').forEach(el => el.style.fontSize = currentFontSize + 'rem');
+            document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
             document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
             // Persist preference
             try { localStorage.setItem('lc_font_size', currentFontSize); } catch(e) {}
@@ -638,7 +634,7 @@
             if (saved) {
                 currentFontSize = parseFloat(saved);
                 document.addEventListener('DOMContentLoaded', () => {
-                    document.querySelectorAll('.caption-line').forEach(el => el.style.fontSize = currentFontSize + 'rem');
+                    document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
                     document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
                 });
             }
