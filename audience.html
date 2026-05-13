@@ -116,11 +116,19 @@
             flex-direction: column;
             justify-content: flex-end;
             width: 100%;
-            overflow-y: auto;
+            overflow: hidden;
             position: relative;
         }
         
-        .caption-text {
+        .caption-lines {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            overflow: hidden;
+            flex: 1;
+        }
+        
+        .caption-line {
             font-size: 1.75rem;
             line-height: 1.6;
             text-align: left;
@@ -129,12 +137,27 @@
             overflow-wrap: break-word;
             font-weight: 500;
             padding: 0;
-            transition: color 0.2s ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: opacity 0.3s ease;
         }
         
-        .caption-text.interim {
+        .caption-line.past {
+            color: #64748b;
+        }
+        
+        .caption-line.current {
+            color: #f8fafc;
+        }
+        
+        .caption-line.interim {
             color: #94a3b8;
             font-style: italic;
+        }
+        
+        .caption-text {
+            display: none;
         }
         
         .caption-placeholder {
@@ -306,7 +329,7 @@
                     <div class="spinner"></div>
                     <div>Waiting for captions...</div>
                 </div>
-                <div class="caption-text" id="caption-text" style="display: none;"></div>
+                <div class="caption-lines" id="caption-lines" style="display: none;"></div>
             </div>
         </div>
     </main>
@@ -519,30 +542,52 @@
         }
         
         let lastDisplayedText = '';
+        let lastFinalText = '';
         
         function updateCurrentLine(text, isInterim = false) {
-            const placeholder = document.getElementById('caption-placeholder');
-            const captionText = document.getElementById('caption-text');
-            
             if (!text || !text.trim()) return;
             if (text === lastDisplayedText) return;
             lastDisplayedText = text;
             
-            placeholder.style.display = 'none';
-            captionText.style.display = 'block';
+            document.getElementById('caption-placeholder').style.display = 'none';
+            const linesEl = document.getElementById('caption-lines');
+            linesEl.style.display = 'flex';
             
-            // Show as continuous flowing text
-            if (isInterim) {
-                captionText.className = 'caption-text interim';
-            } else {
-                captionText.className = 'caption-text';
-            }
-            captionText.textContent = text;
-            
-            // Auto-scroll to bottom
-            const wrapper = captionText.parentElement;
-            if (wrapper) {
-                wrapper.scrollTop = wrapper.scrollHeight;
+            if (!isInterim && text !== lastFinalText) {
+                // Final text arrived — push the previous current line to past, add new current line
+                lastFinalText = text;
+                
+                // Mark all existing lines as past
+                linesEl.querySelectorAll('.caption-line.current').forEach(el => {
+                    el.className = 'caption-line past';
+                });
+                
+                // Remove interim line if present
+                const interimEl = linesEl.querySelector('.caption-line.interim');
+                if (interimEl) interimEl.remove();
+                
+                // Add new final line
+                const line = document.createElement('div');
+                line.className = 'caption-line current';
+                line.textContent = text;
+                linesEl.appendChild(line);
+                
+                // Keep only last 3 lines visible
+                const allLines = linesEl.querySelectorAll('.caption-line');
+                if (allLines.length > 3) {
+                    for (let i = 0; i < allLines.length - 3; i++) {
+                        allLines[i].remove();
+                    }
+                }
+            } else if (isInterim) {
+                // Interim — update or create the interim line at the bottom
+                let interimEl = linesEl.querySelector('.caption-line.interim');
+                if (!interimEl) {
+                    interimEl = document.createElement('div');
+                    interimEl.className = 'caption-line interim';
+                    linesEl.appendChild(interimEl);
+                }
+                interimEl.textContent = text;
             }
         }
         
@@ -585,7 +630,7 @@
         
         function changeFontSize(delta) {
             currentFontSize = Math.max(1, Math.min(4, currentFontSize + delta));
-            document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
+            document.querySelectorAll('.caption-line').forEach(el => el.style.fontSize = currentFontSize + 'rem');
             document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
             // Persist preference
             try { localStorage.setItem('lc_font_size', currentFontSize); } catch(e) {}
@@ -597,7 +642,6 @@
             if (saved) {
                 currentFontSize = parseFloat(saved);
                 document.addEventListener('DOMContentLoaded', () => {
-                    document.getElementById('caption-text').style.fontSize = currentFontSize + 'rem';
                     document.getElementById('font-size-label').textContent = currentFontSize.toFixed(2) + 'rem';
                 });
             }
