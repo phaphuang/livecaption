@@ -265,38 +265,6 @@
             color: #38bdf8;
             margin-top: 0.5rem;
         }
-        
-        .lang-selector {
-            display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-        }
-        
-        .lang-opt {
-            flex: 1;
-            min-width: 140px;
-            padding: 0.75rem 1rem;
-            border-radius: 0.75rem;
-            border: 2px solid #334155;
-            background: #1e293b;
-            color: #94a3b8;
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: center;
-        }
-        
-        .lang-opt:hover {
-            border-color: #475569;
-            color: #f1f5f9;
-        }
-        
-        .lang-opt.active {
-            border-color: #38bdf8;
-            background: #0c2a3e;
-            color: #38bdf8;
-        }
     </style>
 </head>
 <body>
@@ -323,19 +291,16 @@
             <div class="share-url" id="share-url"></div>
         </div>
         
-        <div class="card" id="lang-section">
-            <div class="card-title">Step 3: Speaker Language</div>
-            <div class="lang-selector">
-                <button class="lang-opt active" id="lang-en" onclick="setSpeakerLang('en')">
-                    🇺🇸 English → Thai, Chinese
+        <div class="card mic-section" id="mic-section">
+            <div class="card-title">Step 3: Select Speaker Language</div>
+            <div style="display:flex;gap:0.5rem;justify-content:center;margin-bottom:1rem">
+                <button class="btn-primary" id="lang-en-btn" style="flex:1;padding:0.6rem;font-size:0.9rem;border-radius:0.5rem" onclick="selectSpeakerLang('en')">
+                    🇺🇸 English
                 </button>
-                <button class="lang-opt" id="lang-th" onclick="setSpeakerLang('th')">
-                    🇹🇭 Thai → English, Chinese
+                <button class="btn-primary" id="lang-th-btn" style="flex:1;padding:0.6rem;font-size:0.9rem;border-radius:0.5rem;opacity:0.5" onclick="selectSpeakerLang('th')">
+                    🇹🇭 ภาษาไทย
                 </button>
             </div>
-        </div>
-        
-        <div class="card mic-section" id="mic-section">
             <div class="card-title">Step 4: Start Captioning</div>
             <div class="mic-button" id="mic-btn" onclick="toggleRecording()">
                 <svg class="mic-icon" viewBox="0 0 24 24">
@@ -348,7 +313,7 @@
         
         <div class="card preview-section" id="preview-section">
             <div class="card-title">Live Preview</div>
-            <div class="preview-label">English</div>
+            <div class="preview-label" id="preview-label">English</div>
             <div class="preview-text" id="preview-text">
                 <div class="spinner" id="spinner"></div>
                 <span id="preview-content">Waiting for captions...</span>
@@ -358,11 +323,19 @@
     
     <script>
         let sessionId = null;
-        let speakerLang = 'en';  // 'en' or 'th'
         let isRecording = false;
         let interimDebounce = null;
         let lastSentInterim = '';
         let lastSentFinal = '';
+        let speakerLang = 'en';  // 'en' or 'th'
+        
+        function selectSpeakerLang(lang) {
+            if (isRecording) return;  // Don't switch while recording
+            speakerLang = lang;
+            document.getElementById('lang-en-btn').style.opacity = lang === 'en' ? '1' : '0.5';
+            document.getElementById('lang-th-btn').style.opacity = lang === 'th' ? '1' : '0.5';
+            document.getElementById('preview-label').textContent = lang === 'en' ? 'English' : 'ภาษาไทย';
+        }
         let fullTranscript = '';  // Accumulated finalized text
         let currentInterim = '';  // Current interim text (not yet finalized)
         let lastInterimTime = 0;
@@ -454,15 +427,6 @@
             }
         }
         
-        function setSpeakerLang(lang) {
-            if (isRecording) return;  // Don't switch while recording
-            speakerLang = lang;
-            document.getElementById('lang-en').classList.toggle('active', lang === 'en');
-            document.getElementById('lang-th').classList.toggle('active', lang === 'th');
-            // Update preview label
-            document.querySelector('.preview-label').textContent = lang === 'th' ? 'Thai' : 'English';
-        }
-        
         function toggleRecording() {
             if (isRecording) {
                 stopRecording();
@@ -511,9 +475,10 @@
                 console.log('Connecting to Deepgram, key:', key.slice(0, 8) + '...');
                 
                 // Build WebSocket URL
+                const dgLang = speakerLang === 'th' ? 'th' : 'en';
                 const dgParams = new URLSearchParams({
                     model: 'nova-3',
-                    language: speakerLang === 'th' ? 'th' : 'en',
+                    language: dgLang,
                     smart_format: 'true',
                     interim_results: 'true',
                     endpointing: '300',
