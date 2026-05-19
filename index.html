@@ -292,16 +292,7 @@
         </div>
         
         <div class="card mic-section" id="mic-section">
-            <div class="card-title">Step 3: Select Speaker Language</div>
-            <div style="display:flex;gap:0.5rem;justify-content:center;margin-bottom:1rem">
-                <button class="btn-primary" id="lang-en-btn" style="flex:1;padding:0.6rem;font-size:0.9rem;border-radius:0.5rem" onclick="selectSpeakerLang('en')">
-                    🇺🇸 English
-                </button>
-                <button class="btn-primary" id="lang-th-btn" style="flex:1;padding:0.6rem;font-size:0.9rem;border-radius:0.5rem;opacity:0.5" onclick="selectSpeakerLang('th')">
-                    🇹🇭 ภาษาไทย
-                </button>
-            </div>
-            <div class="card-title">Step 4: Start Captioning</div>
+            <div class="card-title">Step 3: Start Captioning</div>
             <div class="mic-button" id="mic-btn" onclick="toggleRecording()">
                 <svg class="mic-icon" viewBox="0 0 24 24">
                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -313,7 +304,7 @@
         
         <div class="card preview-section" id="preview-section">
             <div class="card-title">Live Preview</div>
-            <div class="preview-label" id="preview-label">English</div>
+            <div class="preview-label">English</div>
             <div class="preview-text" id="preview-text">
                 <div class="spinner" id="spinner"></div>
                 <span id="preview-content">Waiting for captions...</span>
@@ -327,15 +318,6 @@
         let interimDebounce = null;
         let lastSentInterim = '';
         let lastSentFinal = '';
-        let speakerLang = 'en';  // 'en' or 'th'
-        
-        function selectSpeakerLang(lang) {
-            if (isRecording) return;  // Don't switch while recording
-            speakerLang = lang;
-            document.getElementById('lang-en-btn').style.opacity = lang === 'en' ? '1' : '0.5';
-            document.getElementById('lang-th-btn').style.opacity = lang === 'th' ? '1' : '0.5';
-            document.getElementById('preview-label').textContent = lang === 'en' ? 'English' : 'ภาษาไทย';
-        }
         let fullTranscript = '';  // Accumulated finalized text
         let currentInterim = '';  // Current interim text (not yet finalized)
         let lastInterimTime = 0;
@@ -475,10 +457,9 @@
                 console.log('Connecting to Deepgram, key:', key.slice(0, 8) + '...');
                 
                 // Build WebSocket URL
-                const dgLang = speakerLang === 'th' ? 'th' : 'en';
                 const dgParams = new URLSearchParams({
                     model: 'nova-3',
-                    language: dgLang,
+                    language: 'en',
                     smart_format: 'true',
                     interim_results: 'true',
                     endpointing: '300',
@@ -653,7 +634,7 @@
         function createRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SpeechRecognition();
-            rec.lang = speakerLang === 'th' ? 'th-TH' : 'en-US';
+            rec.lang = 'en-US';
             rec.continuous = true;
             rec.interimResults = true;
             rec.maxAlternatives = 1;
@@ -1004,8 +985,7 @@
                     body: JSON.stringify({
                         text: text,
                         session_id: sessionId,
-                        is_final: false,
-                        source_lang: speakerLang
+                        is_final: false
                     })
                 }).catch(err => console.error('Interim send failed:', err));
             }, 150);  // 150ms debounce for near-instant interim updates
@@ -1026,8 +1006,7 @@
                 body: JSON.stringify({
                     text: text,
                     session_id: sessionId,
-                    is_final: isFinal,
-                    source_lang: speakerLang
+                    is_final: isFinal
                 })
             }).then(res => res.json()).then(data => {
                 if (data.error) console.error('Translation error:', data.error);

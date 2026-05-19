@@ -94,7 +94,6 @@ class TranslateRequest(BaseModel):
     text: str
     session_id: str
     is_final: bool = False
-    source_lang: str = "en"  # 'en' or 'th'
 
 
 # Streaming translation endpoint
@@ -111,7 +110,7 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
         "Content-Type": "application/json"
     }
     
-    lang_names = {"th": "Thai", "zh": "Chinese", "en": "English"}
+    lang_names = {"th": "Thai", "zh": "Chinese"}
     lang_name = lang_names.get(target_lang, target_lang)
     
     payload = {
@@ -150,7 +149,7 @@ async def translate_streaming(text: str, target_lang: str):
         "Content-Type": "application/json"
     }
     
-    lang_names = {"th": "Thai", "zh": "Chinese", "en": "English"}
+    lang_names = {"th": "Thai", "zh": "Chinese"}
     lang_name = lang_names.get(target_lang, target_lang)
     
     payload = {
@@ -217,7 +216,7 @@ async def translate_stream(request: StreamTranslateRequest):
 # Translate endpoint
 @app.post("/api/translate")
 async def translate(request: TranslateRequest):
-    """Save source text immediately, then translate and update."""
+    """Save English immediately, then translate and update."""
     supabase = get_supabase()
     if not supabase:
         return JSONResponse(
@@ -226,53 +225,41 @@ async def translate(request: TranslateRequest):
         )
     
     try:
-        text = request.text.strip()
+        en_text = request.text.strip()
         session_id = request.session_id
-        source_lang = request.source_lang or "en"
         
-        # Determine which column to save source text in, and which to translate
-        if source_lang == "th":
-            # Speaker is Thai -> save Thai, translate to English + Chinese
-            source_col = "th"
-            target_langs = ["en", "zh"]
-        else:
-            # Speaker is English -> save English, translate to Thai + Chinese
-            source_col = "en"
-            target_langs = ["th", "zh"]
-        
-        # Step 1: Save source text to Supabase IMMEDIATELY
+        # Step 1: Save English to Supabase IMMEDIATELY
+        # English audience sees text with near-zero delay
         supabase.table("captions").upsert({
             "session_id": session_id,
-            source_col: text,
+            "en": en_text,
             "updated_at": "now()"
         }).execute()
         
         # Step 2: Only translate on final results to avoid wasting API calls
         if not request.is_final or not OPENAI_API_KEY:
-            result = {"en": "", "th": "", "zh": ""}
-            result[source_col] = text
-            return result
+            return {"en": en_text, "th": "", "zh": ""}
         
-        # Step 3: Translate in parallel to both target languages
-        tasks = [translate_with_openai(text, lang) for lang in target_langs]
-        translations = await asyncio.gather(*tasks)
+        # Step 3: Translate in parallel
+        th_task = translate_with_openai(en_text, "th")
+        zh_task = translate_with_openai(en_text, "zh")
         
-        # Step 4: Build result and update Supabase
-        update_data = {
+        th_text, zh_text = await asyncio.gather(th_task, zh_task)
+        
+        # Step 4: Update Supabase with translations
+        supabase.table("captions").upsert({
             "session_id": session_id,
-            source_col: text,
+            "en": en_text,
+            "th": th_text or "",
+            "zh": zh_text or "",
             "updated_at": "now()"
+        }).execute()
+        
+        return {
+            "en": en_text,
+            "th": th_text or "",
+            "zh": zh_text or ""
         }
-        result = {"en": "", "th": "", "zh": ""}
-        result[source_col] = text
-        
-        for lang, translated in zip(target_langs, translations):
-            update_data[lang] = translated or ""
-            result[lang] = translated or ""
-        
-        supabase.table("captions").upsert(update_data).execute()
-        
-        return result
     
     except httpx.HTTPStatusError as e:
         return JSONResponse(
