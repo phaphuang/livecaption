@@ -94,6 +94,7 @@ class TranslateRequest(BaseModel):
     text: str
     session_id: str
     is_final: bool = False
+    source_lang: str = "en"  # 'en' or 'th'
 
 
 # Streaming translation endpoint
@@ -216,7 +217,7 @@ async def translate_stream(request: StreamTranslateRequest):
 # Translate endpoint
 @app.post("/api/translate")
 async def translate(request: TranslateRequest):
-    """Save English immediately, then translate and update."""
+    """Save source text immediately, then translate and update based on source language."""
     supabase = get_supabase()
     if not supabase:
         return JSONResponse(
@@ -225,39 +226,49 @@ async def translate(request: TranslateRequest):
         )
     
     try:
-        en_text = request.text.strip()
+        text = request.text.strip()
         session_id = request.session_id
+        source_lang = request.source_lang  # 'en' or 'th'
         
-        # Step 1: Save English to Supabase IMMEDIATELY
-        # English audience sees text with near-zero delay
+        # Step 1: Save source text to Supabase immediately so audience sees it fast
         supabase.table("captions").upsert({
             "session_id": session_id,
-            "en": en_text,
+            source_lang: text,
             "updated_at": "now()"
         }).execute()
         
-        # Step 2: Only translate on final results to avoid wasting API calls
+        # Step 2: Only translate on final results
         if not request.is_final or not OPENAI_API_KEY:
-            return {"en": en_text, "th": "", "zh": ""}
+            return {"en": text if source_lang == "en" else "",
+                    "th": text if source_lang == "th" else "",
+                    "zh": ""}
         
-        # Step 3: Translate in parallel
-        th_task = translate_with_openai(en_text, "th")
-        zh_task = translate_with_openai(en_text, "zh")
+        # Step 3: Translate to the two other languages in parallel
+        if source_lang == "th":
+            # Thai speaker → translate to English and Chinese
+            en_task = translate_with_openai(text, "en")
+            zh_task = translate_with_openai(text, "zh")
+            en_text, zh_text = await asyncio.gather(en_task, zh_task)
+            th_text = text
+        else:
+            # English speaker → translate to Thai and Chinese (default)
+            th_task = translate_with_openai(text, "th")
+            zh_task = translate_with_openai(text, "zh")
+            th_text, zh_text = await asyncio.gather(th_task, zh_task)
+            en_text = text
         
-        th_text, zh_text = await asyncio.gather(th_task, zh_task)
-        
-        # Step 4: Update Supabase with translations
+        # Step 4: Update Supabase with all translations
         supabase.table("captions").upsert({
             "session_id": session_id,
             "en": en_text,
-            "th": th_text or "",
+            "th": th_text,
             "zh": zh_text or "",
             "updated_at": "now()"
         }).execute()
         
         return {
             "en": en_text,
-            "th": th_text or "",
+            "th": th_text,
             "zh": zh_text or ""
         }
     

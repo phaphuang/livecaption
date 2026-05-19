@@ -265,6 +265,38 @@
             color: #38bdf8;
             margin-top: 0.5rem;
         }
+        
+        .lang-selector {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        
+        .lang-opt {
+            flex: 1;
+            min-width: 140px;
+            padding: 0.75rem 1rem;
+            border-radius: 0.75rem;
+            border: 2px solid #334155;
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        
+        .lang-opt:hover {
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+        
+        .lang-opt.active {
+            border-color: #38bdf8;
+            background: #0c2a3e;
+            color: #38bdf8;
+        }
     </style>
 </head>
 <body>
@@ -291,8 +323,20 @@
             <div class="share-url" id="share-url"></div>
         </div>
         
+        <div class="card" id="lang-section">
+            <div class="card-title">Step 3: Speaker Language</div>
+            <div class="lang-selector">
+                <button class="lang-opt active" id="lang-en" onclick="setSpeakerLang('en')">
+                    🇺🇸 English → Thai, Chinese
+                </button>
+                <button class="lang-opt" id="lang-th" onclick="setSpeakerLang('th')">
+                    🇹🇭 Thai → English, Chinese
+                </button>
+            </div>
+        </div>
+        
         <div class="card mic-section" id="mic-section">
-            <div class="card-title">Step 3: Start Captioning</div>
+            <div class="card-title">Step 4: Start Captioning</div>
             <div class="mic-button" id="mic-btn" onclick="toggleRecording()">
                 <svg class="mic-icon" viewBox="0 0 24 24">
                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -314,6 +358,7 @@
     
     <script>
         let sessionId = null;
+        let speakerLang = 'en';  // 'en' or 'th'
         let isRecording = false;
         let interimDebounce = null;
         let lastSentInterim = '';
@@ -409,6 +454,15 @@
             }
         }
         
+        function setSpeakerLang(lang) {
+            if (isRecording) return;  // Don't switch while recording
+            speakerLang = lang;
+            document.getElementById('lang-en').classList.toggle('active', lang === 'en');
+            document.getElementById('lang-th').classList.toggle('active', lang === 'th');
+            // Update preview label
+            document.querySelector('.preview-label').textContent = lang === 'th' ? 'Thai' : 'English';
+        }
+        
         function toggleRecording() {
             if (isRecording) {
                 stopRecording();
@@ -459,7 +513,7 @@
                 // Build WebSocket URL
                 const dgParams = new URLSearchParams({
                     model: 'nova-3',
-                    language: 'en',
+                    language: speakerLang === 'th' ? 'th' : 'en',
                     smart_format: 'true',
                     interim_results: 'true',
                     endpointing: '300',
@@ -634,7 +688,7 @@
         function createRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SpeechRecognition();
-            rec.lang = 'en-US';
+            rec.lang = speakerLang === 'th' ? 'th-TH' : 'en-US';
             rec.continuous = true;
             rec.interimResults = true;
             rec.maxAlternatives = 1;
@@ -985,7 +1039,8 @@
                     body: JSON.stringify({
                         text: text,
                         session_id: sessionId,
-                        is_final: false
+                        is_final: false,
+                        source_lang: speakerLang
                     })
                 }).catch(err => console.error('Interim send failed:', err));
             }, 150);  // 150ms debounce for near-instant interim updates
@@ -1006,7 +1061,8 @@
                 body: JSON.stringify({
                     text: text,
                     session_id: sessionId,
-                    is_final: isFinal
+                    is_final: isFinal,
+                    source_lang: speakerLang
                 })
             }).then(res => res.json()).then(data => {
                 if (data.error) console.error('Translation error:', data.error);
