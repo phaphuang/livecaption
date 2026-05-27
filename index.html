@@ -501,42 +501,26 @@
                         document.getElementById('spinner').classList.remove('active');
                     }
                     
-                    // Handle transcription results - subtitle style (current sentence only)
+                    // Handle transcription results
                     if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
                         const transcript = msg.channel.alternatives[0].transcript;
                         if (!transcript || !transcript.trim()) return;
                         
                         const previewContent = document.getElementById('preview-content');
-                        const isFinal = msg.is_final;
                         
-                        if (isFinal) {
-                            // Append to buffer and check for sentence end
+                        if (msg.is_final) {
                             fullTranscript += transcript + ' ';
                             currentInterim = '';
-                            
-                            // Extract current sentence (after last sentence boundary)
-                            const currentSentence = getCurrentSentence(fullTranscript);
-                            previewContent.textContent = currentSentence;
-                            
-                            // If sentence ends with punctuation, clear after a delay for next sentence
-                            if (/[.!?]$/.test(currentSentence.trim())) {
-                                setTimeout(() => {
-                                    if (currentInterim === '') {  // Only clear if no new interim
-                                        fullTranscript = '';
-                                        previewContent.textContent = '';
-                                    }
-                                }, 2000);
-                            }
-                            
+                            previewContent.textContent = fullTranscript;
                             sendToServer(fullTranscript.trim(), true);
                         } else {
-                            // Interim - show current sentence with interim in italic
                             currentInterim = transcript;
                             lastInterimTime = Date.now();
-                            const combined = fullTranscript + transcript;
-                            const currentSentence = getCurrentSentence(combined);
-                            previewContent.innerHTML = escapeHtml(currentSentence);
-                            sendInterim(combined.trim());
+                            const display = fullTranscript + transcript;
+                            previewContent.innerHTML = escapeHtml(fullTranscript) +
+                                '<span style="color:#94a3b8;font-style:italic">' +
+                                escapeHtml(transcript) + '</span>';
+                            sendInterim(display.trim());
                         }
                     }
                 };
@@ -608,25 +592,6 @@
             return div.innerHTML;
         }
         
-        // Extract current sentence from text (subtitle style)
-        function getCurrentSentence(text) {
-            if (!text) return '';
-            // Find last sentence boundary
-            const matches = text.match(/[^.!?]*[.!?]/g);
-            if (!matches) return text.trim();  // No sentence end yet, return all
-            
-            // Get text after last sentence boundary
-            const lastBoundary = matches[matches.length - 1];
-            const afterLast = text.slice(text.lastIndexOf(lastBoundary) + lastBoundary.length);
-            
-            // If there's text after boundary, return it (new sentence started)
-            // Otherwise return the last complete sentence
-            if (afterLast.trim()) {
-                return afterLast.trim();
-            }
-            return lastBoundary.trim();
-        }
-        
         // ========================================
         // Web Speech API (fallback)
         // ========================================
@@ -658,30 +623,15 @@
                 
                 if (newFinal) {
                     fullTranscript += newFinal;
-                    currentInterim = '';
-                    
-                    // Show only current sentence
-                    const currentSentence = getCurrentSentence(fullTranscript);
-                    previewContent.textContent = currentSentence;
-                    
-                    // Clear after sentence ends
-                    if (/[.!?]$/.test(currentSentence.trim())) {
-                        setTimeout(() => {
-                            if (currentInterim === '') {
-                                fullTranscript = '';
-                                previewContent.textContent = '';
-                            }
-                        }, 2000);
-                    }
-                    
+                    currentInterim = '';  // Cleared - it became final
+                    previewContent.textContent = fullTranscript;
                     sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
                     currentInterim = interimText;
                     lastInterimTime = Date.now();
-                    const combined = fullTranscript + interimText;
-                    const currentSentence = getCurrentSentence(combined);
-                    previewContent.textContent = currentSentence;
-                    sendInterim(combined.trim());
+                    const display = fullTranscript + interimText;
+                    previewContent.innerHTML = escapeHtml(fullTranscript) + '<span style="color:#94a3b8;font-style:italic">' + escapeHtml(interimText) + '</span>';
+                    sendInterim(display.trim());
                 }
             };
             

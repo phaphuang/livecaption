@@ -520,52 +520,24 @@
         
         let lastDisplayedText = '';
         
-        function getCurrentSentence(text) {
-            if (!text) return '';
-            // Find last sentence boundary
-            const matches = text.match(/[^.!?]*[.!?]/g);
-            if (!matches) return text.trim();
-            
-            const lastBoundary = matches[matches.length - 1];
-            const afterLast = text.slice(text.lastIndexOf(lastBoundary) + lastBoundary.length);
-            
-            if (afterLast.trim()) {
-                return afterLast.trim();
-            }
-            return lastBoundary.trim();
-        }
-        
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
             const captionText = document.getElementById('caption-text');
             
             if (!text || !text.trim()) return;
-            
-            // Extract current sentence only (subtitle style)
-            const currentSentence = getCurrentSentence(text);
-            if (currentSentence === lastDisplayedText) return;
-            lastDisplayedText = currentSentence;
+            if (text === lastDisplayedText) return;
+            lastDisplayedText = text;
             
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            // Show as subtitle
+            // Show as continuous flowing text
             if (isInterim) {
                 captionText.className = 'caption-text interim';
             } else {
                 captionText.className = 'caption-text';
             }
-            captionText.textContent = currentSentence;
-            
-            // Clear display after sentence ends (2 second pause)
-            if (/[.!?]$/.test(currentSentence)) {
-                setTimeout(() => {
-                    if (captionText.textContent === currentSentence) {
-                        captionText.textContent = '';
-                        lastDisplayedText = '';
-                    }
-                }, 2000);
-            }
+            captionText.textContent = text;
             
             // Auto-scroll to bottom
             const wrapper = captionText.parentElement;
