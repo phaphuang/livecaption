@@ -529,14 +529,29 @@
         
         let lastDisplayedText = '';
         
-        // Split text into sentences on . ? ! 。？！ boundaries (works for EN, TH, ZH)
+        // Split on sentence-ending punctuation (EN + ZH), keeping punctuation attached
         function splitSentences(text) {
-            // Insert a split marker after each sentence-ending punctuation
-            // Handles: English . ? !  and  Chinese/Japanese 。？！
-            // Uses a marker so we keep the punctuation at the end of each sentence
             const marked = text.replace(/([.?!。？！])\s*/gu, '$1\x00');
-            const parts = marked.split('\x00');
-            return parts.map(s => s.trim()).filter(s => s.length > 0);
+            return marked.split('\x00').map(s => s.trim()).filter(s => s.length > 0);
+        }
+        
+        // For Thai and other scripts without punctuation, chunk by word count
+        function chunkByWords(text, chunkSize) {
+            // Thai words aren't space-separated; treat every ~10 chars as one "word"
+            // For space-separated languages, split on spaces
+            const hasSpaces = /\s/.test(text);
+            let tokens;
+            if (hasSpaces) {
+                tokens = text.trim().split(/\s+/);
+            } else {
+                // No spaces (Thai, Chinese without spaces): chunk by character count
+                tokens = text.match(/.{1,12}/gu) || [text];
+            }
+            const chunks = [];
+            for (let i = 0; i < tokens.length; i += chunkSize) {
+                chunks.push(tokens.slice(i, i + chunkSize).join(hasSpaces ? ' ' : ''));
+            }
+            return chunks;
         }
         
         function updateCurrentLine(text, isInterim = false) {
@@ -556,16 +571,24 @@
                 captionText.className = 'caption-text';
             }
             
-            // First try splitting by newlines (backend may already provide them)
-            // Then split each line further by sentence-ending punctuation
+            const MAX_LINES = 4;
+            
+            // Step 1: split by newlines the backend may have provided
             const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-            const allSentences = rawLines.flatMap(line => splitSentences(line));
             
-            // Only show the last 3 sentences
-            const MAX_SENTENCES = 3;
-            const sentences = allSentences.slice(-MAX_SENTENCES);
+            // Step 2: further split each line by sentence-ending punctuation
+            let sentences = rawLines.flatMap(line => splitSentences(line));
             
-            captionText.innerHTML = sentences
+            // Step 3: if splitting produced only 1 chunk (no punctuation found — e.g. Thai),
+            // fall back to chunking by word groups so we still get line breaks
+            if (sentences.length <= 1) {
+                sentences = chunkByWords(text.trim(), 10);
+            }
+            
+            // Step 4: keep only the last MAX_LINES chunks
+            const visible = sentences.slice(-MAX_LINES);
+            
+            captionText.innerHTML = visible
                 .map(s => `<p class="caption-sentence">${escapeHtml(s)}</p>`)
                 .join('');
             
