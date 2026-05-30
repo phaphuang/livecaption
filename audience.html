@@ -121,29 +121,28 @@
         }
         
         .caption-text {
-            font-size: 1.75rem;
-            line-height: 1.6;
-            text-align: left;
+            font-size: 2.5rem;
+            line-height: 1.4;
+            text-align: center;
             color: #f8fafc;
             word-wrap: break-word;
             overflow-wrap: break-word;
-            font-weight: 500;
-            padding: 0;
-            transition: color 0.2s ease;
+            font-weight: 600;
+            padding: 1rem 1.5rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+            animation: subtitleFadeIn 0.25s ease-out;
+            max-width: 90%;
+            margin: 0 auto;
+        }
+        
+        @keyframes subtitleFadeIn {
+            from { opacity: 0.4; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         
         .caption-text.interim {
-            color: #94a3b8;
+            color: #cbd5e1;
             font-style: italic;
-        }
-        
-        .caption-sentence {
-            margin: 0 0 0.6em 0;
-            line-height: 1.6;
-        }
-        
-        .caption-sentence:last-child {
-            margin-bottom: 0;
         }
         
         .caption-placeholder {
@@ -529,7 +528,9 @@
         }
         
         let lastDisplayedText = '';
-        const MAX_VISIBLE_LINES = 4;
+        let prevFullText = '';      // Full accumulated text from last update (for delta detection)
+        let currentSubtitle = '';   // The currently visible subtitle chunk
+        const SUBTITLE_MAX_CHARS = 90;  // Max chars shown at once (like a movie subtitle line)
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
@@ -542,36 +543,58 @@
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            if (isInterim) {
-                captionText.className = 'caption-text interim';
-            } else {
-                captionText.className = 'caption-text';
-            }
+            const trimmed = text.trim();
             
-            // Simply show the full text as one block — let CSS handle wrapping
-            // Only show the trailing portion to keep it compact (last ~150 chars)
-            let displayText = text.trim();
-            const MAX_DISPLAY = 150;
-            if (displayText.length > MAX_DISPLAY) {
-                displayText = displayText.slice(-MAX_DISPLAY);
-                // Don't cut a word in half — find the first space and trim there
-                const firstSpace = displayText.indexOf(' ');
-                if (firstSpace > 0 && firstSpace < 30) {
-                    displayText = displayText.slice(firstSpace + 1);
+            // Detect what's new since the last update
+            let newPart;
+            if (trimmed.startsWith(prevFullText) && prevFullText) {
+                newPart = trimmed.slice(prevFullText.length).trim();
+            } else {
+                // Reset / brand new text
+                newPart = trimmed;
+                currentSubtitle = '';
+            }
+            prevFullText = trimmed;
+            
+            // Append the new piece to the current subtitle
+            if (newPart) {
+                if (currentSubtitle) {
+                    // Add space between if needed (for spaced languages)
+                    const needsSpace = /\S$/.test(currentSubtitle) && /^\S/.test(newPart) && /\s/.test(currentSubtitle);
+                    currentSubtitle += (needsSpace ? ' ' : '') + newPart;
+                } else {
+                    currentSubtitle = newPart;
                 }
             }
             
-            captionText.textContent = displayText;
-            
-            // Auto-scroll to bottom
-            const wrapper = captionText.parentElement;
-            if (wrapper) {
-                wrapper.scrollTop = wrapper.scrollHeight;
+            // If subtitle gets too long, slide the window forward (drop oldest words)
+            if (currentSubtitle.length > SUBTITLE_MAX_CHARS) {
+                const overflow = currentSubtitle.length - SUBTITLE_MAX_CHARS;
+                let cut = currentSubtitle.slice(overflow);
+                // Snap to next word boundary if the language uses spaces
+                if (/\s/.test(cut)) {
+                    const firstSpace = cut.indexOf(' ');
+                    if (firstSpace >= 0 && firstSpace < 25) {
+                        cut = cut.slice(firstSpace + 1);
+                    }
+                }
+                currentSubtitle = cut;
             }
+            
+            // Set classes & content (re-trigger fade animation)
+            captionText.className = isInterim ? 'caption-text interim' : 'caption-text';
+            captionText.textContent = currentSubtitle;
+            
+            // Restart the fade-in animation
+            captionText.style.animation = 'none';
+            void captionText.offsetWidth;  // force reflow
+            captionText.style.animation = '';
         }
         
         function resetLineHistory() {
             lastDisplayedText = '';
+            prevFullText = '';
+            currentSubtitle = '';
         }
         
         function escapeHtml(text) {
