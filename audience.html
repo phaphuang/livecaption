@@ -137,6 +137,15 @@
             font-style: italic;
         }
         
+        .caption-sentence {
+            margin: 0 0 0.6em 0;
+            line-height: 1.6;
+        }
+        
+        .caption-sentence:last-child {
+            margin-bottom: 0;
+        }
+        
         .caption-placeholder {
             font-size: 1.125rem;
             color: #64748b;
@@ -520,6 +529,16 @@
         
         let lastDisplayedText = '';
         
+        // Split text into sentences on . ? ! 。？！ boundaries (works for EN, TH, ZH)
+        function splitSentences(text) {
+            // Insert a split marker after each sentence-ending punctuation
+            // Handles: English . ? !  and  Chinese/Japanese 。？！
+            // Uses a marker so we keep the punctuation at the end of each sentence
+            const marked = text.replace(/([.?!。？！])\s*/gu, '$1\x00');
+            const parts = marked.split('\x00');
+            return parts.map(s => s.trim()).filter(s => s.length > 0);
+        }
+        
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
             const captionText = document.getElementById('caption-text');
@@ -537,13 +556,18 @@
                 captionText.className = 'caption-text';
             }
             
-            // Split on newlines — backend sends one sentence per line for TH/ZH
-            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-            if (lines.length > 1) {
-                captionText.innerHTML = lines.map(l => `<p style="margin: 0 0 0.4em 0">${escapeHtml(l)}</p>`).join('');
-            } else {
-                captionText.textContent = text;
-            }
+            // First try splitting by newlines (backend may already provide them)
+            // Then split each line further by sentence-ending punctuation
+            const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const allSentences = rawLines.flatMap(line => splitSentences(line));
+            
+            // Only show the last 3 sentences
+            const MAX_SENTENCES = 3;
+            const sentences = allSentences.slice(-MAX_SENTENCES);
+            
+            captionText.innerHTML = sentences
+                .map(s => `<p class="caption-sentence">${escapeHtml(s)}</p>`)
+                .join('');
             
             // Auto-scroll to bottom
             const wrapper = captionText.parentElement;
