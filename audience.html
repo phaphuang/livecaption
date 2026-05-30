@@ -531,13 +531,19 @@
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            // Show as continuous flowing text
             if (isInterim) {
                 captionText.className = 'caption-text interim';
             } else {
                 captionText.className = 'caption-text';
             }
-            captionText.textContent = text;
+            
+            // Split on newlines — backend sends one sentence per line for TH/ZH
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            if (lines.length > 1) {
+                captionText.innerHTML = lines.map(l => `<p style="margin: 0 0 0.4em 0">${escapeHtml(l)}</p>`).join('');
+            } else {
+                captionText.textContent = text;
+            }
             
             // Auto-scroll to bottom
             const wrapper = captionText.parentElement;

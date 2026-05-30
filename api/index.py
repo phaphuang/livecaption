@@ -118,7 +118,11 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": f"Translate to {lang_name}. Output only the translation."
+                "content": (
+                    f"Translate the following English text to {lang_name}. "
+                    "Preserve the sentence structure: output one translated sentence per line, "
+                    "matching the number of sentences in the input. Output only the translation, no explanations."
+                )
             },
             {
                 "role": "user",
@@ -126,7 +130,7 @@ async def translate_with_openai(text: str, target_lang: str) -> str:
             }
         ],
         "temperature": 0.1,
-        "max_tokens": 200
+        "max_tokens": 500
     }
     
     async with httpx.AsyncClient() as client:
@@ -157,7 +161,11 @@ async def translate_streaming(text: str, target_lang: str):
         "messages": [
             {
                 "role": "system",
-                "content": f"Translate to {lang_name}. Output only the translation."
+                "content": (
+                    f"Translate the following English text to {lang_name}. "
+                    "Preserve the sentence structure: output one translated sentence per line, "
+                    "matching the number of sentences in the input. Output only the translation, no explanations."
+                )
             },
             {
                 "role": "user",
@@ -165,7 +173,7 @@ async def translate_streaming(text: str, target_lang: str):
             }
         ],
         "temperature": 0.1,
-        "max_tokens": 200,
+        "max_tokens": 500,
         "stream": True
     }
     
