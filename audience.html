@@ -398,6 +398,7 @@
             lastEnText = '';
             lastTranslatedText = '';
             lastDisplayedText = '';
+            resetLineHistory();
             
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -529,6 +530,11 @@
         
         let lastDisplayedText = '';
         
+        // Stable line history — once a line is committed, it never changes
+        const MAX_VISIBLE_LINES = 4;
+        let committedLines = [];    // finalized lines (never change)
+        let currentLine = '';       // the live/updating bottom line
+        const LINE_CHAR_LIMIT = 35; // chars before current line gets committed
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
@@ -547,42 +553,58 @@
                 captionText.className = 'caption-text';
             }
             
-            const MAX_LINES = 4;
-            const MAX_CHARS = 120;  // max characters visible on screen at once
+            // The new text from the server replaces the current live line
+            // Find what's new compared to what we already committed
+            const committedText = committedLines.join(' ');
+            let newText = text.trim();
             
-            // Always trim text to a rolling window of recent characters
-            let displayText = text.trim();
-            if (displayText.length > MAX_CHARS) {
-                // Cut at a space boundary if possible
-                displayText = displayText.slice(-MAX_CHARS);
-                const spaceIdx = displayText.indexOf(' ');
-                if (spaceIdx > 0 && spaceIdx < 20) {
-                    displayText = displayText.slice(spaceIdx + 1);
+            // If the new text starts with what we've committed, extract only the new part
+            if (committedText && newText.startsWith(committedText)) {
+                newText = newText.slice(committedText.length).trim();
+            } else if (committedText && !newText.includes(committedText.slice(-20))) {
+                // Text was completely replaced (new translation batch) — reset history
+                committedLines = [];
+                currentLine = '';
+            }
+            
+            // Update the current (live) line
+            currentLine = newText;
+            
+            // If current line exceeds the char limit, commit the overflow to history
+            while (currentLine.length > LINE_CHAR_LIMIT) {
+                // Find a good break point (space, comma, period)
+                let breakAt = -1;
+                // Look for break point around LINE_CHAR_LIMIT
+                for (let i = LINE_CHAR_LIMIT; i >= LINE_CHAR_LIMIT - 10 && i >= 0; i--) {
+                    if (currentLine[i] === ' ' || currentLine[i] === ',' || 
+                        currentLine[i] === '.' || currentLine[i] === '。') {
+                        breakAt = i;
+                        break;
+                    }
+                }
+                // If no good break point found, break at limit
+                if (breakAt < 0) breakAt = LINE_CHAR_LIMIT;
+                
+                const committed = currentLine.slice(0, breakAt + 1).trim();
+                currentLine = currentLine.slice(breakAt + 1).trim();
+                if (committed) {
+                    committedLines.push(committed);
                 }
             }
             
-            // Split the trimmed text into MAX_LINES even lines
-            const hasSpaces = /\s/.test(displayText);
-            let lines;
-            
-            if (hasSpaces) {
-                const words = displayText.split(/\s+/);
-                const perLine = Math.ceil(words.length / MAX_LINES);
-                lines = [];
-                for (let i = 0; i < words.length; i += perLine) {
-                    lines.push(words.slice(i, i + perLine).join(' '));
-                }
-            } else {
-                // No spaces (compact Chinese/Japanese)
-                const perLine = Math.ceil(displayText.length / MAX_LINES);
-                lines = [];
-                for (let i = 0; i < displayText.length; i += perLine) {
-                    lines.push(displayText.slice(i, i + perLine));
-                }
+            // Build display: last N-1 committed lines + current live line
+            const visibleCommitted = committedLines.slice(-(MAX_VISIBLE_LINES - 1));
+            const allLines = [...visibleCommitted];
+            if (currentLine) {
+                allLines.push(currentLine);
             }
             
-            captionText.innerHTML = lines
-                .map(s => `<p class="caption-sentence">${escapeHtml(s)}</p>`)
+            captionText.innerHTML = allLines
+                .map((s, i) => {
+                    const isLive = (i === allLines.length - 1 && currentLine);
+                    const cls = isLive ? 'caption-sentence caption-live' : 'caption-sentence';
+                    return `<p class="${cls}">${escapeHtml(s)}</p>`;
+                })
                 .join('');
             
             // Auto-scroll to bottom
@@ -590,6 +612,13 @@
             if (wrapper) {
                 wrapper.scrollTop = wrapper.scrollHeight;
             }
+        }
+        
+        // Reset line history when language changes or session restarts
+        function resetLineHistory() {
+            committedLines = [];
+            currentLine = '';
+            lastDisplayedText = '';
         }
         
         function escapeHtml(text) {
