@@ -545,11 +545,14 @@
                 // No punctuation found (e.g. Thai) — just keep a trailing window
                 if (trimmed.length <= SUBTITLE_FALLBACK_CHARS) return trimmed;
                 let tail = trimmed.slice(-SUBTITLE_FALLBACK_CHARS);
-                // Snap to a word boundary if there's a space nearby
+                // Snap to a word boundary if there's a space within reasonable range
                 const firstSpace = tail.indexOf(' ');
-                if (firstSpace > 0 && firstSpace < 20) {
+                if (firstSpace > 0 && firstSpace < 30) {
                     tail = tail.slice(firstSpace + 1);
                 }
+                // Strip orphan combining marks at the start (Thai tone marks, vowels)
+                // so we never display a broken character cluster
+                tail = tail.replace(/^[\p{M}\p{Mn}\p{Mc}]+/u, '');
                 return tail;
             }
             
@@ -557,28 +560,27 @@
             const lastMatch = matches[matches.length - 1];
             const afterLast = trimmed.slice(lastMatch.index + 1).trim();
             
+            // Helper: cap length and strip orphan combining marks at the start
+            const cap = (s) => {
+                let out = s.length > SUBTITLE_MAX_CHARS ? s.slice(-SUBTITLE_MAX_CHARS) : s;
+                return out.replace(/^[\p{M}\p{Mn}\p{Mc}]+/u, '');
+            };
+            
             if (afterLast) {
                 // We're mid-way through the next sentence — show it
-                return afterLast.length > SUBTITLE_MAX_CHARS
-                    ? afterLast.slice(-SUBTITLE_MAX_CHARS)
-                    : afterLast;
+                return cap(afterLast);
             }
             
             // Text ends with punctuation — show the LAST completed sentence briefly
-            // Find the previous sentence boundary
             if (matches.length >= 2) {
                 const prevMatch = matches[matches.length - 2];
                 const lastSentence = trimmed.slice(prevMatch.index + 1, lastMatch.index + 1).trim();
-                return lastSentence.length > SUBTITLE_MAX_CHARS
-                    ? lastSentence.slice(-SUBTITLE_MAX_CHARS)
-                    : lastSentence;
+                return cap(lastSentence);
             }
             
             // Only one sentence in total — show it
             const onlySentence = trimmed.slice(0, lastMatch.index + 1);
-            return onlySentence.length > SUBTITLE_MAX_CHARS
-                ? onlySentence.slice(-SUBTITLE_MAX_CHARS)
-                : onlySentence;
+            return cap(onlySentence);
         }
         
         function updateCurrentLine(text, isInterim = false) {
