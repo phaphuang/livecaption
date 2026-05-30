@@ -528,9 +528,58 @@
         }
         
         let lastDisplayedText = '';
-        let prevFullText = '';      // Full accumulated text from last update (for delta detection)
-        let currentSubtitle = '';   // The currently visible subtitle chunk
-        const SUBTITLE_MAX_CHARS = 90;  // Max chars shown at once (like a movie subtitle line)
+        let lastSubtitle = '';
+        const SUBTITLE_MAX_CHARS = 80;     // Hard cap for one subtitle line
+        const SUBTITLE_FALLBACK_CHARS = 60; // For text without punctuation (Thai, etc.)
+        
+        // Extract just the CURRENT sentence (text after the last sentence boundary)
+        function extractCurrentSubtitle(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return '';
+            
+            // Find the last sentence-ending punctuation: . ? ! 。？！
+            // We want the text AFTER it (the in-progress next sentence)
+            const matches = [...trimmed.matchAll(/[.?!。？！]/gu)];
+            
+            if (matches.length === 0) {
+                // No punctuation found (e.g. Thai) — just keep a trailing window
+                if (trimmed.length <= SUBTITLE_FALLBACK_CHARS) return trimmed;
+                let tail = trimmed.slice(-SUBTITLE_FALLBACK_CHARS);
+                // Snap to a word boundary if there's a space nearby
+                const firstSpace = tail.indexOf(' ');
+                if (firstSpace > 0 && firstSpace < 20) {
+                    tail = tail.slice(firstSpace + 1);
+                }
+                return tail;
+            }
+            
+            // Get text after the LAST sentence boundary
+            const lastMatch = matches[matches.length - 1];
+            const afterLast = trimmed.slice(lastMatch.index + 1).trim();
+            
+            if (afterLast) {
+                // We're mid-way through the next sentence — show it
+                return afterLast.length > SUBTITLE_MAX_CHARS
+                    ? afterLast.slice(-SUBTITLE_MAX_CHARS)
+                    : afterLast;
+            }
+            
+            // Text ends with punctuation — show the LAST completed sentence briefly
+            // Find the previous sentence boundary
+            if (matches.length >= 2) {
+                const prevMatch = matches[matches.length - 2];
+                const lastSentence = trimmed.slice(prevMatch.index + 1, lastMatch.index + 1).trim();
+                return lastSentence.length > SUBTITLE_MAX_CHARS
+                    ? lastSentence.slice(-SUBTITLE_MAX_CHARS)
+                    : lastSentence;
+            }
+            
+            // Only one sentence in total — show it
+            const onlySentence = trimmed.slice(0, lastMatch.index + 1);
+            return onlySentence.length > SUBTITLE_MAX_CHARS
+                ? onlySentence.slice(-SUBTITLE_MAX_CHARS)
+                : onlySentence;
+        }
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
@@ -543,58 +592,28 @@
             placeholder.style.display = 'none';
             captionText.style.display = 'block';
             
-            const trimmed = text.trim();
+            const subtitle = extractCurrentSubtitle(text);
+            if (!subtitle) return;
             
-            // Detect what's new since the last update
-            let newPart;
-            if (trimmed.startsWith(prevFullText) && prevFullText) {
-                newPart = trimmed.slice(prevFullText.length).trim();
-            } else {
-                // Reset / brand new text
-                newPart = trimmed;
-                currentSubtitle = '';
-            }
-            prevFullText = trimmed;
-            
-            // Append the new piece to the current subtitle
-            if (newPart) {
-                if (currentSubtitle) {
-                    // Add space between if needed (for spaced languages)
-                    const needsSpace = /\S$/.test(currentSubtitle) && /^\S/.test(newPart) && /\s/.test(currentSubtitle);
-                    currentSubtitle += (needsSpace ? ' ' : '') + newPart;
-                } else {
-                    currentSubtitle = newPart;
-                }
-            }
-            
-            // If subtitle gets too long, slide the window forward (drop oldest words)
-            if (currentSubtitle.length > SUBTITLE_MAX_CHARS) {
-                const overflow = currentSubtitle.length - SUBTITLE_MAX_CHARS;
-                let cut = currentSubtitle.slice(overflow);
-                // Snap to next word boundary if the language uses spaces
-                if (/\s/.test(cut)) {
-                    const firstSpace = cut.indexOf(' ');
-                    if (firstSpace >= 0 && firstSpace < 25) {
-                        cut = cut.slice(firstSpace + 1);
-                    }
-                }
-                currentSubtitle = cut;
-            }
-            
-            // Set classes & content (re-trigger fade animation)
             captionText.className = isInterim ? 'caption-text interim' : 'caption-text';
-            captionText.textContent = currentSubtitle;
+            captionText.textContent = subtitle;
             
-            // Restart the fade-in animation
-            captionText.style.animation = 'none';
-            void captionText.offsetWidth;  // force reflow
-            captionText.style.animation = '';
+            // Re-trigger fade animation only when the subtitle actually changes meaningfully
+            // (i.e. when the new sentence replaces an old one, not on every word append)
+            if (subtitle !== lastSubtitle) {
+                const isReplacement = lastSubtitle && !subtitle.startsWith(lastSubtitle);
+                if (isReplacement) {
+                    captionText.style.animation = 'none';
+                    void captionText.offsetWidth;
+                    captionText.style.animation = '';
+                }
+                lastSubtitle = subtitle;
+            }
         }
         
         function resetLineHistory() {
             lastDisplayedText = '';
-            prevFullText = '';
-            currentSubtitle = '';
+            lastSubtitle = '';
         }
         
         function escapeHtml(text) {
