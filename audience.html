@@ -535,23 +535,33 @@
             return marked.split('\x00').map(s => s.trim()).filter(s => s.length > 0);
         }
         
-        // For Thai and other scripts without punctuation, chunk by word count
-        function chunkByWords(text, chunkSize) {
-            // Thai words aren't space-separated; treat every ~10 chars as one "word"
-            // For space-separated languages, split on spaces
-            const hasSpaces = /\s/.test(text);
-            let tokens;
+        // For Thai and other scripts without sentence punctuation:
+        // keep only a short rolling window of recent text, split into short lines
+        function chunkByWords(text, linesWanted) {
+            const hasSpaces = /\s/.test(text.trim());
+            
             if (hasSpaces) {
-                tokens = text.trim().split(/\s+/);
+                // Space-separated (Thai phrases, English): keep last ~24 words total
+                const words = text.trim().split(/\s+/);
+                const WINDOW = 24;          // total words kept on screen
+                const recent = words.slice(-WINDOW);
+                const perLine = Math.ceil(recent.length / linesWanted);
+                const chunks = [];
+                for (let i = 0; i < recent.length; i += perLine) {
+                    chunks.push(recent.slice(i, i + perLine).join(' '));
+                }
+                return chunks;
             } else {
-                // No spaces (Thai, Chinese without spaces): chunk by character count
-                tokens = text.match(/.{1,12}/gu) || [text];
+                // No spaces (Chinese): keep last ~45 characters total
+                const WINDOW = 45;
+                const recent = text.trim().slice(-WINDOW);
+                const perLine = Math.ceil(recent.length / linesWanted);
+                const chunks = [];
+                for (let i = 0; i < recent.length; i += perLine) {
+                    chunks.push(recent.slice(i, i + perLine));
+                }
+                return chunks;
             }
-            const chunks = [];
-            for (let i = 0; i < tokens.length; i += chunkSize) {
-                chunks.push(tokens.slice(i, i + chunkSize).join(hasSpaces ? ' ' : ''));
-            }
-            return chunks;
         }
         
         function updateCurrentLine(text, isInterim = false) {
@@ -580,9 +590,9 @@
             let sentences = rawLines.flatMap(line => splitSentences(line));
             
             // Step 3: if splitting produced only 1 chunk (no punctuation found — e.g. Thai),
-            // fall back to chunking by word groups so we still get line breaks
+            // fall back to a short rolling window split into MAX_LINES short lines
             if (sentences.length <= 1) {
-                sentences = chunkByWords(text.trim(), 10);
+                sentences = chunkByWords(text.trim(), MAX_LINES);
             }
             
             // Step 4: keep only the last MAX_LINES chunks
