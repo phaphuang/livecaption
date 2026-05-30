@@ -529,40 +529,6 @@
         
         let lastDisplayedText = '';
         
-        // Split on sentence-ending punctuation (EN + ZH), keeping punctuation attached
-        function splitSentences(text) {
-            const marked = text.replace(/([.?!。？！])\s*/gu, '$1\x00');
-            return marked.split('\x00').map(s => s.trim()).filter(s => s.length > 0);
-        }
-        
-        // For Thai and other scripts without sentence punctuation:
-        // keep only a short rolling window of recent text, split into short lines
-        function chunkByWords(text, linesWanted) {
-            const hasSpaces = /\s/.test(text.trim());
-            
-            if (hasSpaces) {
-                // Space-separated (Thai phrases, English): keep last ~24 words total
-                const words = text.trim().split(/\s+/);
-                const WINDOW = 24;          // total words kept on screen
-                const recent = words.slice(-WINDOW);
-                const perLine = Math.ceil(recent.length / linesWanted);
-                const chunks = [];
-                for (let i = 0; i < recent.length; i += perLine) {
-                    chunks.push(recent.slice(i, i + perLine).join(' '));
-                }
-                return chunks;
-            } else {
-                // No spaces (Chinese): keep last ~45 characters total
-                const WINDOW = 45;
-                const recent = text.trim().slice(-WINDOW);
-                const perLine = Math.ceil(recent.length / linesWanted);
-                const chunks = [];
-                for (let i = 0; i < recent.length; i += perLine) {
-                    chunks.push(recent.slice(i, i + perLine));
-                }
-                return chunks;
-            }
-        }
         
         function updateCurrentLine(text, isInterim = false) {
             const placeholder = document.getElementById('caption-placeholder');
@@ -582,23 +548,40 @@
             }
             
             const MAX_LINES = 4;
+            const MAX_CHARS = 120;  // max characters visible on screen at once
             
-            // Step 1: split by newlines the backend may have provided
-            const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-            
-            // Step 2: further split each line by sentence-ending punctuation
-            let sentences = rawLines.flatMap(line => splitSentences(line));
-            
-            // Step 3: if splitting produced only 1 chunk (no punctuation found — e.g. Thai),
-            // fall back to a short rolling window split into MAX_LINES short lines
-            if (sentences.length <= 1) {
-                sentences = chunkByWords(text.trim(), MAX_LINES);
+            // Always trim text to a rolling window of recent characters
+            let displayText = text.trim();
+            if (displayText.length > MAX_CHARS) {
+                // Cut at a space boundary if possible
+                displayText = displayText.slice(-MAX_CHARS);
+                const spaceIdx = displayText.indexOf(' ');
+                if (spaceIdx > 0 && spaceIdx < 20) {
+                    displayText = displayText.slice(spaceIdx + 1);
+                }
             }
             
-            // Step 4: keep only the last MAX_LINES chunks
-            const visible = sentences.slice(-MAX_LINES);
+            // Split the trimmed text into MAX_LINES even lines
+            const hasSpaces = /\s/.test(displayText);
+            let lines;
             
-            captionText.innerHTML = visible
+            if (hasSpaces) {
+                const words = displayText.split(/\s+/);
+                const perLine = Math.ceil(words.length / MAX_LINES);
+                lines = [];
+                for (let i = 0; i < words.length; i += perLine) {
+                    lines.push(words.slice(i, i + perLine).join(' '));
+                }
+            } else {
+                // No spaces (compact Chinese/Japanese)
+                const perLine = Math.ceil(displayText.length / MAX_LINES);
+                lines = [];
+                for (let i = 0; i < displayText.length; i += perLine) {
+                    lines.push(displayText.slice(i, i + perLine));
+                }
+            }
+            
+            captionText.innerHTML = lines
                 .map(s => `<p class="caption-sentence">${escapeHtml(s)}</p>`)
                 .join('');
             
