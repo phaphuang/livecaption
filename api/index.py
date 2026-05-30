@@ -94,6 +94,7 @@ class TranslateRequest(BaseModel):
     text: str
     session_id: str
     is_final: bool = False
+    delta: str = ""  # New portion since last final — if set, only translate this and append
 
 
 # Streaming translation endpoint
@@ -234,6 +235,7 @@ async def translate(request: TranslateRequest):
     
     try:
         en_text = request.text.strip()
+        delta = (request.delta or "").strip()
         session_id = request.session_id
         
         # Step 1: Save English to Supabase IMMEDIATELY
@@ -248,25 +250,46 @@ async def translate(request: TranslateRequest):
         if not request.is_final or not OPENAI_API_KEY:
             return {"en": en_text, "th": "", "zh": ""}
         
-        # Step 3: Translate in parallel
-        th_task = translate_with_openai(en_text, "th")
-        zh_task = translate_with_openai(en_text, "zh")
+        # Step 3: Decide what to translate — delta if available, otherwise full text
+        # Translating only the delta keeps already-translated text STABLE
+        translate_text = delta if delta else en_text
+        if not translate_text:
+            return {"en": en_text, "th": "", "zh": ""}
         
-        th_text, zh_text = await asyncio.gather(th_task, zh_task)
+        th_task = translate_with_openai(translate_text, "th")
+        zh_task = translate_with_openai(translate_text, "zh")
+        th_new, zh_new = await asyncio.gather(th_task, zh_task)
         
-        # Step 4: Update Supabase with translations
+        # Step 4: If delta-mode, fetch existing translation and append
+        if delta:
+            existing = supabase.table("captions").select("th,zh").eq(
+                "session_id", session_id
+            ).execute()
+            existing_th = ""
+            existing_zh = ""
+            if existing.data and len(existing.data) > 0:
+                existing_th = (existing.data[0].get("th") or "").strip()
+                existing_zh = (existing.data[0].get("zh") or "").strip()
+            
+            th_text = (existing_th + " " + (th_new or "")).strip() if existing_th else (th_new or "")
+            zh_text = (existing_zh + (zh_new or "")).strip() if existing_zh else (zh_new or "")
+        else:
+            th_text = th_new or ""
+            zh_text = zh_new or ""
+        
+        # Step 5: Update Supabase with the (possibly appended) translations
         supabase.table("captions").upsert({
             "session_id": session_id,
             "en": en_text,
-            "th": th_text or "",
-            "zh": zh_text or "",
+            "th": th_text,
+            "zh": zh_text,
             "updated_at": "now()"
         }).execute()
         
         return {
             "en": en_text,
-            "th": th_text or "",
-            "zh": zh_text or ""
+            "th": th_text,
+            "zh": zh_text
         }
     
     except httpx.HTTPStatusError as e:

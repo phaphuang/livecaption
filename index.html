@@ -851,6 +851,7 @@
                 fullTranscript = '';
                 currentInterim = '';
                 lastSentInterim = '';
+                lastSentFinal = '';
                 if (interimDebounce) {
                     clearTimeout(interimDebounce);
                     interimDebounce = null;
@@ -945,7 +946,18 @@
         function sendToServer(text, isFinal) {
             if (!sessionId || !text) return;
             if (isFinal && text === lastSentFinal) return;
-            if (isFinal) lastSentFinal = text;
+            
+            // Compute the delta (new portion since last final) for stable translations
+            let delta = '';
+            if (isFinal) {
+                if (text.startsWith(lastSentFinal)) {
+                    delta = text.slice(lastSentFinal.length).trim();
+                } else {
+                    // Text was reset/replaced — translate the whole thing
+                    delta = text;
+                }
+                lastSentFinal = text;
+            }
             
             // Cancel any pending interim
             if (interimDebounce) clearTimeout(interimDebounce);
@@ -955,6 +967,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     text: text,
+                    delta: delta,
                     session_id: sessionId,
                     is_final: isFinal
                 })
