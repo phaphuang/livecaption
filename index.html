@@ -156,6 +156,12 @@
             padding: 0.75rem;
             border-radius: 0.5rem;
             margin-top: 0.5rem;
+            text-decoration: none;
+            display: block;
+        }
+        .share-url:hover {
+            color: #60a5fa;
+            text-decoration: underline;
         }
         
         .mic-section {
@@ -288,7 +294,7 @@
         <div class="card qr-section" id="qr-section">
             <div class="card-title">Step 2: Share with Audience</div>
             <div id="qrcode"></div>
-            <div class="share-url" id="share-url"></div>
+            <a class="share-url" id="share-url" target="_blank" rel="noopener noreferrer"></a>
         </div>
         
         <div class="card mic-section" id="mic-section">
@@ -387,7 +393,9 @@
                 
                 // Generate QR code
                 const shareUrl = `${window.location.origin}/audience.html?session=${sessionId}`;
-                document.getElementById('share-url').textContent = shareUrl;
+                const shareUrlEl = document.getElementById('share-url');
+                shareUrlEl.textContent = shareUrl;
+                shareUrlEl.href = shareUrl;
                 
                 new QRCode(document.getElementById('qrcode'), {
                     text: shareUrl,
