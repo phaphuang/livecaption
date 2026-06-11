@@ -335,6 +335,7 @@
         // Deepgram state
         let dgSocket = null;
         let mediaRecorder = null;
+        let dgKeepAliveTimer = null;
         let mediaStream = null;
         
         // Web Speech API state (fallback)
@@ -474,6 +475,14 @@
                 dgSocket.onopen = () => {
                     console.log('Deepgram WebSocket connected!');
                     lastActivityTime = Date.now();
+
+                    // Keep-alive: prevent Deepgram from closing the connection during silence
+                    if (dgKeepAliveTimer) clearInterval(dgKeepAliveTimer);
+                    dgKeepAliveTimer = setInterval(() => {
+                        if (dgSocket && dgSocket.readyState === WebSocket.OPEN) {
+                            dgSocket.send(JSON.stringify({ type: 'KeepAlive' }));
+                        }
+                    }, 8000);
                     
                     // Start MediaRecorder with Opus codec, 20ms chunks
                     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -535,9 +544,16 @@
                 
                 dgSocket.onclose = (event) => {
                     console.log('Deepgram closed:', event.code, event.reason);
-                    if (isRecording && !isRestarting && event.code !== 1000) {
-                        stopDeepgram();
-                        fallbackToWebSpeech();
+                    if (dgKeepAliveTimer) { clearInterval(dgKeepAliveTimer); dgKeepAliveTimer = null; }
+                    if (isRecording && !isRestarting) {
+                        isRestarting = true;
+                        console.log('Deepgram disconnected while recording, reconnecting...');
+                        setTimeout(() => {
+                            if (isRecording) {
+                                isRestarting = false;
+                                startDeepgram();
+                            }
+                        }, 1000);
                     }
                 };
                 
@@ -565,6 +581,7 @@
         }
         
         function stopDeepgram() {
+            if (dgKeepAliveTimer) { clearInterval(dgKeepAliveTimer); dgKeepAliveTimer = null; }
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 try { mediaRecorder.stop(); } catch (e) {}
             }
@@ -740,13 +757,21 @@
         function startLivenessCheck() {
             stopLivenessCheck();
             livenessTimer = setInterval(() => {
-                if (!isRecording || !recognition) return;
-                
-                const timeSinceStart = Date.now() - recognitionStartTime;
+                if (!isRecording) return;
+
                 const timeSinceActivity = Date.now() - lastActivityTime;
-                
-                // If started > 3s ago but no activity for > 4s, it's likely dead
-                if (timeSinceStart > 3000 && timeSinceActivity > 4000 && !isRestarting) {
+
+                // recognition is null means a previous restart failed — try again
+                if (!recognition && !isRestarting) {
+                    console.warn('Liveness: recognition is null, restarting...');
+                    hardResetRecognition();
+                    return;
+                }
+
+                const timeSinceStart = Date.now() - recognitionStartTime;
+
+                // If started > 3s ago but no activity for > 15s, it's likely dead
+                if (timeSinceStart > 3000 && timeSinceActivity > 15000 && !isRestarting) {
                     console.warn('Liveness: recognition appears dead, hard resetting...');
                     hardResetRecognition();
                 }
@@ -923,30 +948,36 @@
             updateStatus('waiting');
         }
         
+        // Keep API payloads small — audience only needs recent captions, not the full session
+        const MAX_API_CHARS = 500;
+        function recentText(text) {
+            return text.length > MAX_API_CHARS ? text.slice(-MAX_API_CHARS) : text;
+        }
+
         // Send interim text to server (debounced, English-only update)
         function sendInterim(text) {
             if (!sessionId || !text || text === lastSentInterim) return;
             lastSentInterim = text;
-            
+
             if (interimDebounce) clearTimeout(interimDebounce);
             interimDebounce = setTimeout(() => {
                 fetch('/api/translate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        text: text,
+                        text: recentText(text),
                         session_id: sessionId,
                         is_final: false
                     })
                 }).catch(err => console.error('Interim send failed:', err));
             }, 150);  // 150ms debounce for near-instant interim updates
         }
-        
+
         // Send final text for translation
         function sendToServer(text, isFinal) {
             if (!sessionId || !text) return;
             if (isFinal && text === lastSentFinal) return;
-            
+
             // Compute the delta (new portion since last final) for stable translations
             let delta = '';
             if (isFinal) {
@@ -958,15 +989,15 @@
                 }
                 lastSentFinal = text;
             }
-            
+
             // Cancel any pending interim
             if (interimDebounce) clearTimeout(interimDebounce);
-            
+
             fetch('/api/translate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    text: text,
+                    text: recentText(text),
                     delta: delta,
                     session_id: sessionId,
                     is_final: isFinal
