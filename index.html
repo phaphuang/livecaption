@@ -220,35 +220,37 @@
             display: block;
         }
         
-        .preview-text {
-            font-size: 1.125rem;
-            line-height: 1.6;
-            color: #f1f5f9;
-            min-height: 60px;
-            max-height: 220px;
-            overflow-y: auto;
-            padding: 1rem;
+        .preview-stage {
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.25rem 1.5rem;
             background: #0f172a;
             border-radius: 0.5rem;
             border-left: 3px solid #38bdf8;
-            scroll-behavior: smooth;
+            position: relative;
+            gap: 0.5rem;
         }
 
-        .preview-text::-webkit-scrollbar {
-            width: 6px;
+        .preview-subtitle {
+            font-size: 1.25rem;
+            line-height: 1.5;
+            color: #f1f5f9;
+            text-align: center;
+            font-weight: 500;
+            animation: subtitleFadeIn 0.2s ease-out;
         }
 
-        .preview-text::-webkit-scrollbar-track {
-            background: transparent;
+        .preview-subtitle.interim {
+            color: #94a3b8;
+            font-style: italic;
         }
 
-        .preview-text::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 3px;
-        }
-
-        .preview-text::-webkit-scrollbar-thumb:hover {
-            background: #475569;
+        @keyframes subtitleFadeIn {
+            from { opacity: 0.3; transform: translateY(5px); }
+            to   { opacity: 1;   transform: translateY(0); }
         }
         
         .preview-label {
@@ -331,9 +333,9 @@
         <div class="card preview-section" id="preview-section">
             <div class="card-title">Live Preview</div>
             <div class="preview-label">English</div>
-            <div class="preview-text" id="preview-text">
+            <div class="preview-stage" id="preview-stage">
                 <div class="spinner" id="spinner"></div>
-                <span id="preview-content">Waiting for captions...</span>
+                <div class="preview-subtitle" id="preview-subtitle"></div>
             </div>
         </div>
     </main>
@@ -344,9 +346,10 @@
         let interimDebounce = null;
         let lastSentInterim = '';
         let lastSentFinal = '';
-        let fullTranscript = '';  // Accumulated finalized text
-        let currentInterim = '';  // Current interim text (not yet finalized)
+        let fullTranscript = '';
+        let currentInterim = '';
         let lastInterimTime = 0;
+        let lastPreviewSubtitle = '';
         let lastActivityTime = 0;
         let recognitionStartTime = 0;
         let preemptiveRestartTimer = null;
@@ -557,24 +560,17 @@
                     if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
                         const transcript = msg.channel.alternatives[0].transcript;
                         if (!transcript || !transcript.trim()) return;
-                        
-                        const previewContent = document.getElementById('preview-content');
-                        
+
                         if (msg.is_final) {
                             fullTranscript += transcript + ' ';
                             currentInterim = '';
-                            previewContent.textContent = fullTranscript;
-                            scrollPreviewToBottom();
+                            updatePreviewSubtitle(fullTranscript, false);
                             sendToServer(fullTranscript.trim(), true);
                         } else {
                             currentInterim = transcript;
                             lastInterimTime = Date.now();
-                            const display = fullTranscript + transcript;
-                            previewContent.innerHTML = escapeHtml(fullTranscript) +
-                                '<span style="color:#94a3b8;font-style:italic">' +
-                                escapeHtml(transcript) + '</span>';
-                            scrollPreviewToBottom();
-                            sendInterim(display.trim());
+                            updatePreviewSubtitle(fullTranscript + transcript, true);
+                            sendInterim((fullTranscript + transcript).trim());
                         }
                     }
                 };
@@ -669,9 +665,59 @@
             }
         }
         
-        function scrollPreviewToBottom() {
-            const box = document.getElementById('preview-text');
-            if (box) box.scrollTop = box.scrollHeight;
+        const SUBTITLE_MAX_CHARS = 90;
+        const SUBTITLE_FALLBACK_CHARS = 60;
+
+        function extractSubtitle(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return '';
+
+            const matches = [...trimmed.matchAll(/[.?!。？！]/gu)];
+
+            if (matches.length === 0) {
+                if (trimmed.length <= SUBTITLE_FALLBACK_CHARS) return trimmed;
+                let tail = trimmed.slice(-SUBTITLE_FALLBACK_CHARS);
+                const sp = tail.indexOf(' ');
+                if (sp > 0 && sp < 30) tail = tail.slice(sp + 1);
+                return tail.replace(/^[\p{M}\p{Mn}\p{Mc}]+/u, '');
+            }
+
+            const lastMatch = matches[matches.length - 1];
+            const afterLast = trimmed.slice(lastMatch.index + 1).trim();
+
+            const cap = (s) => {
+                let out = s.length > SUBTITLE_MAX_CHARS ? s.slice(-SUBTITLE_MAX_CHARS) : s;
+                return out.replace(/^[\p{M}\p{Mn}\p{Mc}]+/u, '');
+            };
+
+            if (afterLast) return cap(afterLast);
+
+            if (matches.length >= 2) {
+                const prev = matches[matches.length - 2];
+                return cap(trimmed.slice(prev.index + 1, lastMatch.index + 1).trim());
+            }
+
+            return cap(trimmed.slice(0, lastMatch.index + 1));
+        }
+
+        function updatePreviewSubtitle(text, isInterim) {
+            const el = document.getElementById('preview-subtitle');
+            if (!el) return;
+            const subtitle = extractSubtitle(text) || text.trim();
+            if (!subtitle) return;
+
+            const wasReplacement = lastPreviewSubtitle &&
+                !subtitle.startsWith(lastPreviewSubtitle.slice(0, 10));
+            lastPreviewSubtitle = subtitle;
+
+            el.className = 'preview-subtitle' + (isInterim ? ' interim' : '');
+            el.textContent = subtitle;
+
+            if (wasReplacement) {
+                el.style.animation = 'none';
+                void el.offsetWidth;
+                el.style.animation = '';
+            }
         }
 
         function escapeHtml(text) {
@@ -706,22 +752,18 @@
                     }
                 }
                 
-                const previewContent = document.getElementById('preview-content');
                 document.getElementById('spinner').classList.remove('active');
                 
                 if (newFinal) {
                     fullTranscript += newFinal;
                     currentInterim = '';
-                    previewContent.textContent = fullTranscript;
-                    scrollPreviewToBottom();
+                    updatePreviewSubtitle(fullTranscript, false);
                     sendToServer(fullTranscript.trim(), true);
                 } else if (interimText) {
                     currentInterim = interimText;
                     lastInterimTime = Date.now();
-                    const display = fullTranscript + interimText;
-                    previewContent.innerHTML = escapeHtml(fullTranscript) + '<span style="color:#94a3b8;font-style:italic">' + escapeHtml(interimText) + '</span>';
-                    scrollPreviewToBottom();
-                    sendInterim(display.trim());
+                    updatePreviewSubtitle(fullTranscript + interimText, true);
+                    sendInterim((fullTranscript + interimText).trim());
                 }
             };
             
@@ -765,8 +807,7 @@
                 console.log('Preserved interim before restart:', currentInterim);
                 currentInterim = '';
                 // Update preview
-                const previewContent = document.getElementById('preview-content');
-                if (previewContent) previewContent.textContent = fullTranscript;
+                updatePreviewSubtitle(fullTranscript, false);
                 // Send to server as final (so audience gets the words)
                 sendToServer(fullTranscript.trim(), true);
             }
@@ -956,8 +997,9 @@
                 }
                 
                 // Clear preview
-                const previewContent = document.getElementById('preview-content');
-                if (previewContent) previewContent.textContent = '';
+                const previewSubtitleEl = document.getElementById('preview-subtitle');
+                if (previewSubtitleEl) previewSubtitleEl.textContent = '';
+                lastPreviewSubtitle = '';
                 
                 if (sttProvider === 'deepgram') {
                     await startDeepgram();

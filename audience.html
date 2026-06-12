@@ -102,49 +102,46 @@
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
-            max-width: 900px;
+            max-width: 960px;
             width: 100%;
             margin: 0 auto;
-            padding: 1rem;
-            position: relative;
+            padding: 1rem 1rem 2.5rem;
         }
-        
+
         .caption-wrapper {
-            min-height: 200px;
-            max-height: 400px;
             display: flex;
             flex-direction: column;
+            align-items: center;
             justify-content: flex-end;
             width: 100%;
-            overflow-y: auto;
-            position: relative;
+            min-height: 140px;
         }
-        
+
         .caption-text {
             font-size: 2.5rem;
-            line-height: 1.4;
+            line-height: 1.45;
             text-align: center;
             color: #f8fafc;
             word-wrap: break-word;
             overflow-wrap: break-word;
-            font-weight: 600;
-            padding: 1rem 1.5rem;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
-            animation: subtitleFadeIn 0.25s ease-out;
-            max-width: 90%;
-            margin: 0 auto;
+            font-weight: 700;
+            padding: 0.5rem 1.25rem;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 0.4rem;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+            animation: subtitleFadeIn 0.2s ease-out;
+            max-width: 92%;
         }
-        
+
         @keyframes subtitleFadeIn {
-            from { opacity: 0.4; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; transform: translateY(6px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
-        
+
         .caption-text.interim {
             color: #cbd5e1;
-            font-style: italic;
         }
-        
+
         .caption-placeholder {
             font-size: 1.125rem;
             color: #64748b;
