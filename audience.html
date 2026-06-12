@@ -336,9 +336,10 @@
     </div>
     
     <script>
-        // Get session from URL
+        // Get session from URL — supports /audience.html?session=ID and /s/ID
         const urlParams = new URLSearchParams(window.location.search);
-        const sessionId = urlParams.get('session');
+        const pathMatch = window.location.pathname.match(/^\/s\/([^/]+)$/);
+        const sessionId = urlParams.get('session') || (pathMatch && pathMatch[1]);
         
         let currentLang = 'en';
         let supabaseClient = null;

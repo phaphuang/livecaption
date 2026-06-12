@@ -1,5 +1,8 @@
 {
   "version": 2,
+  "redirects": [
+    { "source": "/s/:id", "destination": "/audience.html?session=:id", "permanent": false }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index.py" }
   ]

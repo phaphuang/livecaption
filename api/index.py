@@ -23,6 +23,10 @@ async def root():
 async def audience():
     return FileResponse(os.path.join(ROOT_DIR, "audience.html"))
 
+@app.get("/s/{session_id}")
+async def short_link(session_id: str):
+    return FileResponse(os.path.join(ROOT_DIR, "audience.html"))
+
 # Public config endpoint for client-side Supabase connection
 @app.get("/api/config")
 async def get_config():

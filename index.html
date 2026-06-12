@@ -413,7 +413,7 @@
                 qrSection.classList.add('active');
                 
                 // Generate QR code
-                const shareUrl = `${window.location.origin}/audience.html?session=${sessionId}`;
+                const shareUrl = `${window.location.origin}/s/${sessionId}`;
                 const shareUrlEl = document.getElementById('share-url');
                 shareUrlEl.textContent = shareUrl;
                 shareUrlEl.href = shareUrl;
