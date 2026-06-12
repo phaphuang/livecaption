@@ -342,6 +342,7 @@
         let dgSocket = null;
         let mediaRecorder = null;
         let dgKeepAliveTimer = null;
+        let dgWatchdogTimer = null;
         let mediaStream = null;
         
         // Web Speech API state (fallback)
@@ -491,20 +492,34 @@
                             dgSocket.send(JSON.stringify({ type: 'KeepAlive' }));
                         }
                     }, 8000);
-                    
+
+                    // Watchdog: if no transcript activity for 30s, assume connection is stuck and reconnect
+                    startDeepgramWatchdog();
+
                     // Start MediaRecorder with Opus codec, 20ms chunks
                     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
                         ? 'audio/webm;codecs=opus'
                         : 'audio/webm';
-                    
+
                     mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-                    
+
                     mediaRecorder.ondataavailable = ({ data }) => {
                         if (dgSocket && dgSocket.readyState === WebSocket.OPEN && data.size > 0) {
                             dgSocket.send(data);
                         }
                     };
-                    
+
+                    mediaRecorder.onerror = (e) => {
+                        console.error('MediaRecorder error:', e);
+                        if (isRecording && !isRestarting) {
+                            isRestarting = true;
+                            stopDeepgram();
+                            setTimeout(() => {
+                                if (isRecording) { isRestarting = false; startDeepgram(); }
+                            }, 1000);
+                        }
+                    };
+
                     mediaRecorder.start(20);  // 20ms chunks for minimal latency
                     console.log(`MediaRecorder started: ${mimeType}, 20ms chunks`);
                 };
@@ -588,7 +603,28 @@
             }
         }
         
+        function startDeepgramWatchdog() {
+            stopDeepgramWatchdog();
+            dgWatchdogTimer = setInterval(() => {
+                if (!isRecording || isRestarting) return;
+                const idleMs = Date.now() - lastActivityTime;
+                if (idleMs > 30000) {
+                    console.warn('Deepgram watchdog: no activity for', idleMs, 'ms, reconnecting...');
+                    isRestarting = true;
+                    stopDeepgram();
+                    setTimeout(() => {
+                        if (isRecording) { isRestarting = false; startDeepgram(); }
+                    }, 1000);
+                }
+            }, 10000);
+        }
+
+        function stopDeepgramWatchdog() {
+            if (dgWatchdogTimer) { clearInterval(dgWatchdogTimer); dgWatchdogTimer = null; }
+        }
+
         function stopDeepgram() {
+            stopDeepgramWatchdog();
             if (dgKeepAliveTimer) { clearInterval(dgKeepAliveTimer); dgKeepAliveTimer = null; }
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 try { mediaRecorder.stop(); } catch (e) {}
