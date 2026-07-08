@@ -370,8 +370,11 @@
         
         // Load STT config from server
         async function loadConfig() {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
             try {
-                const res = await fetch('/api/config');
+                const res = await fetch('/api/config', { signal: controller.signal });
+                clearTimeout(timeoutId);
                 const config = await res.json();
                 if (config.deepgram_api_key) {
                     deepgramApiKey = config.deepgram_api_key;
@@ -382,6 +385,7 @@
                     console.log('STT provider: Web Speech API (fallback)');
                 }
             } catch (e) {
+                clearTimeout(timeoutId);
                 console.warn('Failed to load config, using Web Speech API:', e);
                 sttProvider = 'webspeech';
             }
@@ -950,6 +954,7 @@
                 currentInterim = '';
                 lastSentInterim = '';
                 lastSentFinal = '';
+                finalSendQueue = Promise.resolve();
                 if (interimDebounce) {
                     clearTimeout(interimDebounce);
                     interimDebounce = null;
@@ -1027,6 +1032,37 @@
             return text.length > MAX_API_CHARS ? text.slice(-MAX_API_CHARS) : text;
         }
 
+        // POST to /api/translate with a timeout and a few retries. Returns
+        // true on success, false if it never went through — a hung or
+        // failed request should never sit forever, but it also shouldn't
+        // be treated as "sent" until the server actually confirms it.
+        async function postTranslate(body, attempts = 3) {
+            for (let i = 0; i < attempts; i++) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                try {
+                    const res = await fetch('/api/translate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeoutId);
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+                    return true;
+                } catch (err) {
+                    clearTimeout(timeoutId);
+                    console.error(`/api/translate failed (attempt ${i + 1}/${attempts}):`, err);
+                    if (i < attempts - 1) {
+                        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+                    }
+                }
+            }
+            return false;
+        }
+
         // Send interim text to server (debounced, English-only update)
         function sendInterim(text) {
             if (!sessionId || !text || text === lastSentInterim) return;
@@ -1034,50 +1070,55 @@
 
             if (interimDebounce) clearTimeout(interimDebounce);
             interimDebounce = setTimeout(() => {
-                fetch('/api/translate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        text: recentText(text),
-                        session_id: sessionId,
-                        is_final: false
-                    })
-                }).catch(err => console.error('Interim send failed:', err));
+                postTranslate({
+                    text: recentText(text),
+                    session_id: sessionId,
+                    is_final: false
+                }, 1);  // interim is superseded constantly — one attempt, no retry
             }, 150);  // 150ms debounce for near-instant interim updates
+        }
+
+        // Final sends are serialized through this queue so that delta
+        // computation always starts from the last CONFIRMED-sent text.
+        // Without this, a failed/slow request could be silently dropped
+        // (lastSentFinal advanced before the network call resolved) or, if
+        // retried naively, get double-appended by the server's delta logic.
+        let finalSendQueue = Promise.resolve();
+
+        async function sendFinalNow(text) {
+            if (text === lastSentFinal) return;
+
+            let delta = '';
+            if (text.startsWith(lastSentFinal)) {
+                delta = text.slice(lastSentFinal.length).trim();
+            } else {
+                // Text was reset/replaced — translate the whole thing
+                delta = text;
+            }
+
+            const ok = await postTranslate({
+                text: recentText(text),
+                delta: delta,
+                session_id: sessionId,
+                is_final: true
+            });
+
+            if (ok) {
+                lastSentFinal = text;
+            } else {
+                console.error('Final translation permanently failed for this segment; the next final will retry the combined delta.');
+            }
         }
 
         // Send final text for translation
         function sendToServer(text, isFinal) {
             if (!sessionId || !text) return;
-            if (isFinal && text === lastSentFinal) return;
-
-            // Compute the delta (new portion since last final) for stable translations
-            let delta = '';
-            if (isFinal) {
-                if (text.startsWith(lastSentFinal)) {
-                    delta = text.slice(lastSentFinal.length).trim();
-                } else {
-                    // Text was reset/replaced — translate the whole thing
-                    delta = text;
-                }
-                lastSentFinal = text;
-            }
+            if (!isFinal) return;
 
             // Cancel any pending interim
             if (interimDebounce) clearTimeout(interimDebounce);
 
-            fetch('/api/translate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    text: recentText(text),
-                    delta: delta,
-                    session_id: sessionId,
-                    is_final: isFinal
-                })
-            }).then(res => res.json()).then(data => {
-                if (data.error) console.error('Translation error:', data.error);
-            }).catch(err => console.error('Translation failed:', err));
+            finalSendQueue = finalSendQueue.then(() => sendFinalNow(text));
         }
         
         function updateStatus(status) {

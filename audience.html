@@ -397,6 +397,9 @@
         let subscription = null;
         let SUPABASE_URL = '';
         let SUPABASE_KEY = '';
+        let connectionMode = 'connecting';
+        let lastAppliedUpdatedAt = null;
+        let isReconnecting = false;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', async () => {
@@ -417,7 +420,14 @@
             
             // Fetch Supabase config from API
             try {
-                const response = await fetch('/api/config');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                let response;
+                try {
+                    response = await fetch('/api/config', { signal: controller.signal });
+                } finally {
+                    clearTimeout(timeoutId);
+                }
                 if (!response.ok) {
                     throw new Error('Failed to load config');
                 }
@@ -445,9 +455,27 @@
             
             // Subscribe to realtime updates
             subscribeToCaptions();
-            
+
             // Load initial caption
             loadInitialCaption();
+
+            // Watchdog: periodically verify the realtime channel is actually
+            // delivering updates, since a dead socket doesn't always fire
+            // CLOSED/CHANNEL_ERROR (e.g. after the tab sleeps or the phone
+            // switches networks) — without this, the audience view can look
+            // "Connected" while permanently stuck on stale text.
+            watchdogTimer = setInterval(watchdogCheck, 8000);
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    loadInitialCaption();
+                    reconnectRealtime();
+                }
+            });
+            window.addEventListener('online', () => {
+                loadInitialCaption();
+                reconnectRealtime();
+            });
         });
         
         function selectLang(lang) {
@@ -469,7 +497,8 @@
         }
         
         let pollInterval = null;
-        
+        let watchdogTimer = null;
+
         async function subscribeToCaptions() {
             try {
                 console.log('Connecting to Supabase...', SUPABASE_URL);
@@ -509,6 +538,7 @@
                         console.log('Subscription status:', status);
                         if (status === 'SUBSCRIBED') {
                             updateConnectionStatus('connected');
+                            stopPolling();
                             console.log('Realtime subscription active');
                         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                             console.warn('Realtime failed, switching to polling mode');
@@ -536,6 +566,48 @@
                 pollInterval = null;
             }
         }
+
+        // Detects a realtime channel that has gone silently dead (no
+        // CLOSED/CHANNEL_ERROR fired, but no updates are actually arriving).
+        // Runs on an interval regardless of connection mode, comparing the
+        // server's latest updated_at against the last one we actually applied.
+        async function watchdogCheck() {
+            if (!supabaseClient || !sessionId || connectionMode !== 'connected') return;
+            try {
+                const { data, error } = await supabaseClient
+                    .from('captions')
+                    .select('updated_at')
+                    .eq('session_id', sessionId)
+                    .single();
+
+                if (error || !data || !data.updated_at) return;
+
+                const serverUpdatedAt = new Date(data.updated_at).getTime();
+                if (lastAppliedUpdatedAt && serverUpdatedAt > lastAppliedUpdatedAt + 5000) {
+                    console.warn('Watchdog: realtime channel appears stale, reconnecting');
+                    await loadInitialCaption();
+                    reconnectRealtime();
+                }
+            } catch (error) {
+                console.warn('Watchdog check failed:', error);
+            }
+        }
+
+        function reconnectRealtime() {
+            if (isReconnecting) return;
+            isReconnecting = true;
+            try {
+                if (subscription) {
+                    supabaseClient.removeChannel(subscription);
+                    subscription = null;
+                }
+            } catch (error) {
+                console.warn('Error removing stale channel:', error);
+            }
+            subscribeToCaptions().finally(() => {
+                isReconnecting = false;
+            });
+        }
         
         async function loadInitialCaption() {
             try {
@@ -549,10 +621,15 @@
                     throw error;
                 }
                 
-                if (data && data[currentLang]) {
-                    updateCurrentLine(data[currentLang]);
+                if (data) {
+                    if (data.updated_at) {
+                        lastAppliedUpdatedAt = new Date(data.updated_at).getTime();
+                    }
+                    if (data[currentLang]) {
+                        updateCurrentLine(data[currentLang]);
+                    }
                 }
-                
+
             } catch (error) {
                 console.error('Error loading initial caption:', error);
             }
@@ -563,7 +640,11 @@
         
         function handleCaptionUpdate(data) {
             if (!data) return;
-            
+
+            if (data.updated_at) {
+                lastAppliedUpdatedAt = new Date(data.updated_at).getTime();
+            }
+
             const enText = data['en'] || '';
             const langText = data[currentLang] || '';
             
@@ -732,9 +813,10 @@
         }
         
         function updateConnectionStatus(status) {
+            connectionMode = status;
             const indicator = document.getElementById('status-indicator');
             const statusText = document.getElementById('status-text');
-            
+
             indicator.className = 'status-indicator ' + status;
             
             switch (status) {

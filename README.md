@@ -134,7 +134,6 @@ livecaption/
 | `/api/config` | GET | Get client-side configuration (STT provider, Supabase keys) |
 | `/api/transcribe` | POST | Convert audio to English text (batch fallback) |
 | `/api/translate` | POST | Translate text to TH/ZH and save to Supabase |
-| `/api/translate-stream` | POST | Stream translation tokens via SSE |
 
 ---
 
