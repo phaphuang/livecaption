@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LiveCaption - Audience</title>
-    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
     <style>
         * {
             margin: 0;
@@ -393,21 +394,18 @@
         const sessionId = urlParams.get('session') || (pathMatch && pathMatch[1]);
         
         let currentLang = 'en';
-        let supabaseClient = null;
-        let subscription = null;
-        let SUPABASE_URL = '';
-        let SUPABASE_KEY = '';
-        let connectionMode = 'connecting';
-        let lastAppliedUpdatedAt = null;
-        let isReconnecting = false;
-        
+        let firebaseDb = null;
+        let sessionRef = null;
+        let connectedRef = null;
+        let lastSnapshot = null;
+
         // Initialize
         document.addEventListener('DOMContentLoaded', async () => {
             if (!sessionId) {
                 showError('No session ID provided. Please scan the QR code again.');
                 return;
             }
-            
+
             document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
 
             // Scroll detection — show back-to-live button when user scrolls up
@@ -417,8 +415,9 @@
                 userScrolledUp = !atBottom;
                 document.getElementById('scroll-btn').classList.toggle('visible', userScrolledUp);
             });
-            
-            // Fetch Supabase config from API
+
+            // Fetch Firebase config from API
+            let config;
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -431,12 +430,10 @@
                 if (!response.ok) {
                     throw new Error('Failed to load config');
                 }
-                const config = await response.json();
-                SUPABASE_URL = config.supabase_url;
-                SUPABASE_KEY = config.supabase_key;
-                
-                if (!SUPABASE_URL || !SUPABASE_KEY) {
-                    showError('Supabase not configured on server');
+                config = await response.json();
+
+                if (!config.firebase_database_url || !config.firebase_api_key) {
+                    showError('Firebase not configured on server');
                     document.getElementById('status-text').textContent = 'Not configured';
                     return;
                 }
@@ -444,206 +441,74 @@
                 showError('Failed to load configuration: ' + error.message);
                 return;
             }
-            
-            // Initialize Supabase
+
+            // Initialize Firebase
             try {
-                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+                firebase.initializeApp({
+                    apiKey: config.firebase_api_key,
+                    authDomain: config.firebase_auth_domain,
+                    databaseURL: config.firebase_database_url,
+                    projectId: config.firebase_project_id,
+                    appId: config.firebase_app_id
+                });
+                firebaseDb = firebase.database();
             } catch (error) {
-                showError('Failed to initialize Supabase: ' + error.message);
+                showError('Failed to initialize Firebase: ' + error.message);
                 return;
             }
-            
-            // Subscribe to realtime updates
+
+            // Subscribe to realtime updates — the Firebase client SDK owns
+            // its own persistent connection with automatic reconnection, so
+            // there's no polling fallback or watchdog to maintain here.
             subscribeToCaptions();
-
-            // Load initial caption
-            loadInitialCaption();
-
-            // Watchdog: periodically verify the realtime channel is actually
-            // delivering updates, since a dead socket doesn't always fire
-            // CLOSED/CHANNEL_ERROR (e.g. after the tab sleeps or the phone
-            // switches networks) — without this, the audience view can look
-            // "Connected" while permanently stuck on stale text.
-            watchdogTimer = setInterval(watchdogCheck, 8000);
-
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible') {
-                    loadInitialCaption();
-                    reconnectRealtime();
-                }
-            });
-            window.addEventListener('online', () => {
-                loadInitialCaption();
-                reconnectRealtime();
-            });
+            watchConnectionState();
         });
-        
+
         function selectLang(lang) {
             currentLang = lang;
-            
+
             // Clear state when switching languages
             lastEnText = '';
             lastTranslatedText = '';
             lastDisplayedText = '';
             resetLineHistory();
-            
+
             // Update button states
             document.querySelectorAll('.lang-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.lang === lang);
             });
-            
-            // Refresh caption display
-            loadInitialCaption();
-        }
-        
-        let pollInterval = null;
-        let watchdogTimer = null;
 
-        async function subscribeToCaptions() {
-            try {
-                console.log('Connecting to Supabase...', SUPABASE_URL);
-                console.log('Session ID:', sessionId);
-                
-                // Test Supabase connection first
-                const { data: testData, error: testError } = await supabaseClient
-                    .from('captions')
-                    .select('count', { count: 'exact', head: true });
-                
-                if (testError) {
-                    console.error('Supabase connection test failed:', testError);
-                    showError('Database connection failed: ' + testError.message);
-                    updateConnectionStatus('error');
-                    return;
-                }
-                
-                console.log('Supabase connection test passed');
-                
-                // Try realtime subscription
-                subscription = supabaseClient
-                    .channel(`captions:${sessionId}`)
-                    .on(
-                        'postgres_changes',
-                        {
-                            event: '*',
-                            schema: 'public',
-                            table: 'captions',
-                            filter: `session_id=eq.${sessionId}`
-                        },
-                        (payload) => {
-                            console.log('Received realtime update:', payload);
-                            handleCaptionUpdate(payload.new);
-                        }
-                    )
-                    .subscribe((status, err) => {
-                        console.log('Subscription status:', status);
-                        if (status === 'SUBSCRIBED') {
-                            updateConnectionStatus('connected');
-                            stopPolling();
-                            console.log('Realtime subscription active');
-                        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                            console.warn('Realtime failed, switching to polling mode');
-                            startPolling();
-                        }
-                    });
-                    
-            } catch (error) {
-                console.error('Subscription error:', error);
-                startPolling();
-            }
-        }
-        
-        // Fallback polling mechanism
-        function startPolling() {
-            console.log('Starting polling mode (2s interval)');
-            updateConnectionStatus('polling');
-            if (pollInterval) clearInterval(pollInterval);
-            pollInterval = setInterval(loadInitialCaption, 2000);
-        }
-        
-        function stopPolling() {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
+            // Refresh caption display from the last known snapshot
+            if (lastSnapshot) handleCaptionUpdate(lastSnapshot);
         }
 
-        // Detects a realtime channel that has gone silently dead (no
-        // CLOSED/CHANNEL_ERROR fired, but no updates are actually arriving).
-        // Runs on an interval regardless of connection mode, comparing the
-        // server's latest updated_at against the last one we actually applied.
-        async function watchdogCheck() {
-            if (!supabaseClient || !sessionId || connectionMode !== 'connected') return;
-            try {
-                const { data, error } = await supabaseClient
-                    .from('captions')
-                    .select('updated_at')
-                    .eq('session_id', sessionId)
-                    .single();
-
-                if (error || !data || !data.updated_at) return;
-
-                const serverUpdatedAt = new Date(data.updated_at).getTime();
-                if (lastAppliedUpdatedAt && serverUpdatedAt > lastAppliedUpdatedAt + 5000) {
-                    console.warn('Watchdog: realtime channel appears stale, reconnecting');
-                    await loadInitialCaption();
-                    reconnectRealtime();
-                }
-            } catch (error) {
-                console.warn('Watchdog check failed:', error);
-            }
-        }
-
-        function reconnectRealtime() {
-            if (isReconnecting) return;
-            isReconnecting = true;
-            try {
-                if (subscription) {
-                    supabaseClient.removeChannel(subscription);
-                    subscription = null;
-                }
-            } catch (error) {
-                console.warn('Error removing stale channel:', error);
-            }
-            subscribeToCaptions().finally(() => {
-                isReconnecting = false;
+        function subscribeToCaptions() {
+            sessionRef = firebaseDb.ref('sessions/' + sessionId);
+            // 'value' fires immediately with the current data on attach,
+            // then again on every subsequent change — covers both the
+            // initial load and live updates.
+            sessionRef.on('value', (snapshot) => {
+                lastSnapshot = snapshot.val();
+                handleCaptionUpdate(lastSnapshot);
+            }, (error) => {
+                console.error('Firebase read failed:', error);
+                showError('Database connection failed: ' + error.message);
+                updateConnectionStatus('error');
             });
         }
-        
-        async function loadInitialCaption() {
-            try {
-                const { data, error } = await supabaseClient
-                    .from('captions')
-                    .select('*')
-                    .eq('session_id', sessionId)
-                    .single();
-                
-                if (error && error.code !== 'PGRST116') {
-                    throw error;
-                }
-                
-                if (data) {
-                    if (data.updated_at) {
-                        lastAppliedUpdatedAt = new Date(data.updated_at).getTime();
-                    }
-                    if (data[currentLang]) {
-                        updateCurrentLine(data[currentLang]);
-                    }
-                }
 
-            } catch (error) {
-                console.error('Error loading initial caption:', error);
-            }
+        function watchConnectionState() {
+            connectedRef = firebaseDb.ref('.info/connected');
+            connectedRef.on('value', (snapshot) => {
+                updateConnectionStatus(snapshot.val() === true ? 'connected' : 'connecting');
+            });
         }
-        
+
         let lastEnText = '';
         let lastTranslatedText = '';
-        
+
         function handleCaptionUpdate(data) {
             if (!data) return;
-
-            if (data.updated_at) {
-                lastAppliedUpdatedAt = new Date(data.updated_at).getTime();
-            }
 
             const enText = data['en'] || '';
             const langText = data[currentLang] || '';
@@ -813,19 +678,15 @@
         }
         
         function updateConnectionStatus(status) {
-            connectionMode = status;
             const indicator = document.getElementById('status-indicator');
             const statusText = document.getElementById('status-text');
 
             indicator.className = 'status-indicator ' + status;
-            
+            indicator.style.background = '';
+
             switch (status) {
                 case 'connected':
-                    statusText.textContent = 'Connected (Realtime)';
-                    break;
-                case 'polling':
-                    statusText.textContent = 'Connected (Polling)';
-                    indicator.style.background = '#ffa500';
+                    statusText.textContent = 'Connected';
                     break;
                 case 'error':
                     statusText.textContent = 'Disconnected';

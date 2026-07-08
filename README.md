@@ -26,7 +26,7 @@ A full-stack live multilingual captioning web app that allows a presenter to spe
 | Backend | FastAPI (Python) on Vercel |
 | Speech-to-Text | **Deepgram Nova-3** (WebSocket streaming) with Web Speech API fallback |
 | Translation | OpenAI GPT-4o-mini (with streaming support) |
-| Real-time | Supabase Realtime |
+| Real-time | Firebase Realtime Database |
 | Hosting | Vercel |
 
 ---
@@ -40,27 +40,29 @@ git clone https://github.com/yourusername/livecaption.git
 cd livecaption
 ```
 
-### 2. Supabase Setup
+### 2. Firebase Setup
 
-1. Go to [supabase.com](https://supabase.com) and create a new project
-2. Open the SQL Editor and run:
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project
+2. Go to **Build → Realtime Database → Create Database**, pick a region, and start in **locked mode**
+3. Open the **Rules** tab and set:
 
-```sql
--- Create captions table
-CREATE TABLE captions (
-  session_id TEXT PRIMARY KEY,
-  en TEXT,
-  th TEXT,
-  zh TEXT,
-  updated_at TIMESTAMP DEFAULT now()
-);
-
--- Enable Realtime
-ALTER TABLE captions REPLICA IDENTITY FULL;
+```json
+{
+  "rules": {
+    "sessions": {
+      "$sessionId": {
+        ".read": true,
+        ".write": false
+      }
+    }
+  }
+}
 ```
 
-3. Go to **Database → Replication** and enable Realtime for the `captions` table
-4. Copy your **Project URL** and **anon public key** from Settings → API
+   Reads are public (audience clients connect directly), writes are blocked for everyone — only the backend's Admin SDK (which bypasses rules entirely) is allowed to write.
+
+4. Go to **Project Settings → General → Your apps**, add a **Web app**, and copy the `firebaseConfig` values (`apiKey`, `authDomain`, `projectId`, `appId`) plus the Realtime Database URL shown in the Rules tab (e.g. `https://your-project-default-rtdb.region.firebasedatabase.app`)
+5. Go to **Project Settings → Service Accounts → Generate new private key** — this downloads a JSON file used by the backend's Admin SDK. Keep it secret; it grants full read/write access.
 
 ### 3. Deepgram Setup (Recommended - fastest STT)
 
@@ -82,9 +84,15 @@ ALTER TABLE captions REPLICA IDENTITY FULL;
 ```
 DEEPGRAM_API_KEY=your_deepgram_api_key
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_KEY=your_anon_public_key
+FIREBASE_DATABASE_URL=https://your-project-default-rtdb.region.firebasedatabase.app
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...", ...}
+FIREBASE_API_KEY=your_web_api_key
+FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_APP_ID=your_web_app_id
 ```
+
+`FIREBASE_SERVICE_ACCOUNT_JSON` is the entire contents of the downloaded service account key file, pasted as a single-line JSON string. The other `FIREBASE_*` values are safe to expose client-side — Firebase enforces access control via the Realtime Database rules above, not by keeping this config secret.
 
 3. Deploy!
 
@@ -131,9 +139,9 @@ livecaption/
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/session` | POST | Create new session |
-| `/api/config` | GET | Get client-side configuration (STT provider, Supabase keys) |
+| `/api/config` | GET | Get client-side configuration (STT provider, Firebase Web config) |
 | `/api/transcribe` | POST | Convert audio to English text (batch fallback) |
-| `/api/translate` | POST | Translate text to TH/ZH and save to Supabase |
+| `/api/translate` | POST | Translate text to TH/ZH and save to Firebase Realtime Database |
 
 ---
 
@@ -143,8 +151,12 @@ livecaption/
 |----------|-------------|----------|
 | `DEEPGRAM_API_KEY` | Deepgram API key for Nova-3 streaming STT | Recommended |
 | `OPENAI_API_KEY` | OpenAI API key for translation & fallback STT | Yes |
-| `SUPABASE_URL` | Supabase project URL | Yes |
-| `SUPABASE_KEY` | Supabase anon public key | Yes |
+| `FIREBASE_DATABASE_URL` | Firebase Realtime Database URL | Yes |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Service account key JSON (server-side Admin SDK, secret) | Yes |
+| `FIREBASE_API_KEY` | Firebase Web API key (client-side, public) | Yes |
+| `FIREBASE_AUTH_DOMAIN` | Firebase auth domain (client-side, public) | Yes |
+| `FIREBASE_PROJECT_ID` | Firebase project ID (client-side, public) | Yes |
+| `FIREBASE_APP_ID` | Firebase Web app ID (client-side, public) | Yes |
 
 ---
 
@@ -162,14 +174,14 @@ Deepgram Nova-3 Streaming (~150ms first token)
 +-- Send to /api/translate
         | Parallel translation (Thai + Chinese)
         v
-    Supabase Realtime --> Audience pages
+    Firebase Admin SDK write (server) --> Firebase Realtime Database --> Audience pages (direct client subscription)
 ```
 
 ## Troubleshooting
 
 ### No captions appearing
-- Check that Realtime is enabled in Supabase
-- Verify environment variables are set correctly
+- Check that the Realtime Database rules allow public reads on `/sessions/$sessionId` (see Firebase Setup above)
+- Verify environment variables are set correctly, especially `FIREBASE_SERVICE_ACCOUNT_JSON`
 - Check browser console for errors
 
 ### Microphone not working
